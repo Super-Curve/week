@@ -1,0 +1,8 @@
+pandas
+numpy
+scipy
+scikit-learn
+Pillow
+opencv-python==4.5.5.64
+imagehash
+tqdm 
