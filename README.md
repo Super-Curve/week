@@ -31,7 +31,7 @@
 ### 1. 克隆项目
 ```bash
 git clone <repository-url>
-cd stock-curve
+cd week
 ```
 
 ### 2. 创建conda环境
