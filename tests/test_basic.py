@@ -44,9 +44,10 @@ class TestChartGenerator:
     def test_normalize_data_empty(self):
         """测试空数据标准化"""
         generator = FastChartGenerator()
-        x_coords, y_coords = generator.normalize_data({})
-        assert len(x_coords) == 0
-        assert len(y_coords) == 0
+        result = generator.normalize_data({})
+        assert len(result['dates']) == 0
+        assert len(result['close']) == 0
+        assert 'price_info' in result
 
 class TestPatternAnalyzer:
     """测试模式分析器"""

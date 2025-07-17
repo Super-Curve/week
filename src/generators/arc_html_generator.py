@@ -61,6 +61,9 @@ class ArcHTMLGenerator:
             html += f'<div id="page{page}" class="page" style="display: {"block" if page == 1 else "none"};"><div class="charts-grid">'
             for i in range(start_idx, end_idx):
                 code = codes[i]
+                if code not in chart_paths:
+                    print(f"警告: 股票代码 {code} 在 chart_paths 中不存在，跳过")
+                    continue
                 img_path = os.path.relpath(chart_paths[code], self.output_dir)
                 arc_result = arc_results[code]['arc_result']
                 name = arc_results[code].get('name', code)

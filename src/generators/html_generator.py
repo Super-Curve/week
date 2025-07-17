@@ -74,9 +74,12 @@ class StaticHTMLGenerator:
         # 构建图片路径字典（假设图片已存在）
         all_images = {}
         for code in stock_codes:
-            img_path = os.path.join(self.output_dir, "images", f"{code}.png")
+            # 修复路径：使用kline_images目录
+            img_path = os.path.join(self.output_dir, "kline_images", f"{code}.png")
             if os.path.exists(img_path):
                 all_images[code] = img_path
+        
+        print(f"找到 {len(all_images)} 张图片")
         
         # 生成HTML文件
         self._generate_main_html(all_images, stock_codes)

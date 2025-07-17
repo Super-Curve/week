@@ -77,6 +77,240 @@ class PatternAnalyzer:
             }
         }
     
+    def detect_major_arc_bottom(self, prices, min_points=30, r2_threshold=0.6):
+        """
+        识别大弧底形态：初期价格很高，然后一路走低，长期在箱体内波动
+        
+        Args:
+            prices: 价格序列
+            min_points: 最小数据点数（大弧底需要更长时间）
+            r2_threshold: R²拟合度阈值（可以适当放宽）
+            
+        Returns:
+            dict: 大弧底分析结果，如果不满足则返回None
+        """
+        if len(prices) < min_points:
+            return None
+        
+        # 1. 检查初期高位特征
+        initial_high = self._check_initial_high_position(prices)
+        if not initial_high:
+            return None
+        
+        # 2. 检查长期下跌趋势
+        decline_analysis = self._analyze_major_decline(prices)
+        if not decline_analysis:
+            return None
+        
+        # 3. 检查箱体震荡特征
+        box_analysis = self._analyze_box_oscillation(prices, decline_analysis['bottom_start'])
+        if not box_analysis:
+            return None
+        
+        # 4. 整体形态拟合
+        x = np.arange(len(prices))
+        coeffs = np.polyfit(x, prices, 2)
+        
+        # 大弧底允许向下开口的抛物线（因为初期下跌）
+        y_fit = np.polyval(coeffs, x)
+        r2 = 1 - np.sum((prices - y_fit) ** 2) / np.sum((prices - np.mean(prices)) ** 2)
+        
+        if r2 < r2_threshold:
+            return None
+        
+        # 5. 计算大弧底质量评分
+        quality_score = self._calculate_major_arc_quality(prices, coeffs, r2, 
+                                                         initial_high, decline_analysis, box_analysis)
+        
+        return {
+            'type': 'major_arc_bottom',
+            'r2': r2,
+            'quality_score': quality_score,
+            'coeffs': coeffs,
+            'initial_high': initial_high,
+            'decline_analysis': decline_analysis,
+            'box_analysis': box_analysis,
+            'total_points': len(prices),
+            'price_range': {
+                'start': prices[0],
+                'end': prices[-1],
+                'min': np.min(prices),
+                'max': np.max(prices)
+            }
+        }
+    
+    def _check_initial_high_position(self, prices):
+        """检查初期高位特征"""
+        # 检查前20%的数据点是否包含最高价
+        initial_period = max(5, len(prices) // 5)
+        initial_prices = prices[:initial_period]
+        max_price = np.max(prices)
+        
+        # 最高价应该在前20%的时期内出现
+        if np.max(initial_prices) < max_price * 0.95:
+            return None
+        
+        # 找到最高价的位置
+        max_idx = np.argmax(prices)
+        
+        return {
+            'max_idx': max_idx,
+            'max_price': max_price,
+            'initial_period': initial_period,
+            'initial_max': np.max(initial_prices)
+        }
+    
+    def _analyze_major_decline(self, prices):
+        """分析长期下跌趋势"""
+        # 寻找最高点
+        max_idx = np.argmax(prices)
+        max_price = prices[max_idx]
+        
+        # 寻找下跌结束点（局部最低点）
+        bottom_start = self._find_decline_bottom(prices, max_idx)
+        if bottom_start is None:
+            return None
+        
+        # 计算下跌幅度和持续时间
+        decline_prices = prices[max_idx:bottom_start+1]
+        decline_duration = len(decline_prices)
+        decline_amplitude = (max_price - prices[bottom_start]) / max_price
+        
+        # 下跌幅度应该至少30%，持续时间至少占总时间的30%
+        if decline_amplitude < 0.3 or decline_duration < len(prices) * 0.3:
+            return None
+        
+        # 计算下跌斜率
+        if decline_duration > 1:
+            x = np.arange(decline_duration)
+            slope, _, r_value, _, _ = stats.linregress(x, decline_prices)
+        else:
+            slope = 0
+            r_value = 0
+        
+        return {
+            'max_idx': max_idx,
+            'max_price': max_price,
+            'bottom_start': bottom_start,
+            'bottom_price': prices[bottom_start],
+            'decline_duration': decline_duration,
+            'decline_amplitude': decline_amplitude,
+            'decline_slope': slope,
+            'decline_r2': r_value ** 2
+        }
+    
+    def _find_decline_bottom(self, prices, max_idx):
+        """寻找下跌结束点"""
+        # 从最高点开始寻找真正的下跌底部
+        # 使用滑动窗口寻找最低点
+        window_size = 5
+        min_price = float('inf')
+        min_idx = max_idx
+        
+        # 从最高点开始，寻找后续的最低点
+        for i in range(max_idx + 1, len(prices) - window_size):
+            # 计算当前窗口内的平均价格
+            window_prices = prices[i:i+window_size]
+            avg_price = np.mean(window_prices)
+            
+            # 如果当前窗口价格更低，更新最低点
+            if avg_price < min_price:
+                min_price = avg_price
+                min_idx = i
+        
+        # 如果找到了更低的价格，返回该位置
+        if min_idx > max_idx:
+            return min_idx
+        
+        # 如果没找到，返回最后一个点
+        return len(prices) - 1
+    
+    def _analyze_box_oscillation(self, prices, bottom_start):
+        """分析箱体震荡特征"""
+        if bottom_start >= len(prices) - 5:
+            return None
+        
+        # 分析底部震荡阶段
+        box_prices = prices[bottom_start:]
+        box_duration = len(box_prices)
+        
+        # 箱体震荡至少需要10个数据点
+        if box_duration < 10:
+            return None
+        
+        # 计算箱体的上下边界
+        box_high = np.max(box_prices)
+        box_low = np.min(box_prices)
+        box_range = box_high - box_low
+        box_center = (box_high + box_low) / 2
+        
+        # 箱体震荡幅度应该相对较小（不超过下跌幅度的50%）
+        decline_amplitude = (np.max(prices[:bottom_start]) - box_low) / np.max(prices[:bottom_start])
+        if box_range / box_center > decline_amplitude * 0.5:
+            return None
+        
+        # 计算箱体内的震荡次数
+        oscillation_count = self._count_oscillations(box_prices)
+        
+        # 至少应该有2次明显的震荡
+        if oscillation_count < 2:
+            return None
+        
+        # 计算箱体阶段的趋势
+        x = np.arange(box_duration)
+        slope, _, r_value, _, _ = stats.linregress(x, box_prices)
+        
+        return {
+            'start_idx': bottom_start,
+            'duration': box_duration,
+            'box_high': box_high,
+            'box_low': box_low,
+            'box_range': box_range,
+            'box_center': box_center,
+            'oscillation_count': oscillation_count,
+            'box_slope': slope,
+            'box_r2': r_value ** 2
+        }
+    
+    def _count_oscillations(self, prices):
+        """计算震荡次数"""
+        oscillations = 0
+        for i in range(2, len(prices) - 2):
+            # 检查是否为局部最高点或最低点
+            if (prices[i] > prices[i-1] and prices[i] > prices[i-2] and
+                prices[i] > prices[i+1] and prices[i] > prices[i+2]):
+                oscillations += 1
+            elif (prices[i] < prices[i-1] and prices[i] < prices[i-2] and
+                  prices[i] < prices[i+1] and prices[i] < prices[i+2]):
+                oscillations += 1
+        
+        return oscillations
+    
+    def _calculate_major_arc_quality(self, prices, coeffs, r2, 
+                                   initial_high, decline_analysis, box_analysis):
+        """计算大弧底质量评分"""
+        quality_factors = []
+        
+        # 1. 初期高位质量（20%）
+        initial_quality = min(initial_high['initial_max'] / initial_high['max_price'], 1.0)
+        quality_factors.append(initial_quality * 0.2)
+        
+        # 2. 下跌趋势质量（30%）
+        decline_quality = min(decline_analysis['decline_amplitude'] / 0.5, 1.0)  # 理想下跌50%
+        decline_quality *= min(decline_analysis['decline_r2'], 1.0)  # 下跌趋势的线性度
+        quality_factors.append(decline_quality * 0.3)
+        
+        # 3. 箱体震荡质量（30%）
+        box_quality = min(box_analysis['oscillation_count'] / 4, 1.0)  # 理想震荡4次
+        box_quality *= (1.0 - abs(box_analysis['box_slope']))  # 箱体应该横盘
+        quality_factors.append(box_quality * 0.3)
+        
+        # 4. 整体拟合质量（20%）
+        fit_quality = r2
+        quality_factors.append(fit_quality * 0.2)
+        
+        return sum(quality_factors)
+    
     def _analyze_global_stages(self, prices, min_idx):
         """分析全局三阶段特征：严重下降、横盘、轻微上涨"""
         n = len(prices)
