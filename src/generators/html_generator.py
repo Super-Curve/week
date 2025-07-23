@@ -74,8 +74,8 @@ class StaticHTMLGenerator:
         # 构建图片路径字典（假设图片已存在）
         all_images = {}
         for code in stock_codes:
-            # 修复路径：使用kline_images目录
-            img_path = os.path.join(self.output_dir, "kline_images", f"{code}.png")
+            # 图片在父目录的 kline_images 文件夹中
+            img_path = os.path.join(os.path.dirname(self.output_dir), "kline_images", f"{code}.png")
             if os.path.exists(img_path):
                 all_images[code] = img_path
         

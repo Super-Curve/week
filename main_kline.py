@@ -16,7 +16,9 @@ def main():
 
     csv_file_path = args.csv
     output_dir = args.output
+    kline_output_dir = os.path.join(output_dir, 'kline')  # K线页面输出到 output/kline
     kline_img_dir = os.path.join(output_dir, 'kline_images')
+    os.makedirs(kline_output_dir, exist_ok=True)
     os.makedirs(kline_img_dir, exist_ok=True)
 
     # 处理数据
@@ -36,9 +38,9 @@ def main():
     chart_gen.generate_charts_batch(stock_data)
 
     # 生成静态HTML（只生成HTML，不重复生成图片）
-    html_gen = StaticHTMLGenerator(csv_file_path, output_dir=output_dir)
+    html_gen = StaticHTMLGenerator(csv_file_path, output_dir=kline_output_dir)
     html_gen.generate_html_only(stock_data, args.max)
-    print('全部周K线图和index.html已生成，输出目录:', output_dir)
+    print('全部周K线图和index.html已生成，输出目录:', kline_output_dir)
 
 if __name__ == '__main__':
     main() 

@@ -82,7 +82,31 @@ class ArcHTMLGenerator:
                         title = f"{code} {name} 严重下降→横盘→轻微上涨 R²={r2:.2f} 质量={quality:.1f}"
                     else:
                         title = f"{code} {name} 下降→上涨 R²={r2:.2f} 质量={quality:.1f}"
+                elif arc_result.get('type') in ['similarity_based', 'similarity_analysis']:
+                    # 相似度分析结果的标题
+                    similarity_score = arc_result.get('similarity_score', 0)
+                    r2 = arc_result.get('r2', 0)
+                    total_points = arc_result.get('total_points', len(arc_results[code].get('prices', [])))
+                    start = arc_result.get('start', 0)
+                    end = arc_result.get('end', total_points - 1)
+                    
+                    # 确保R²值格式正确
+                    r2_display = f"{r2:.3f}" if r2 > 0 else "0.000"
+                    
+                    title = f"{code} {name} 相似度: {similarity_score:.3f} 区间: {start}-{end} R²={r2_display}"
+                elif arc_result.get('type') == 'strategic_major_arc_bottom':
+                    # 战略大弧底结果
+                    r2 = arc_result.get('r2', 0)
+                    quality_score = arc_result.get('quality_score', 0)
+                    enhanced_score = arc_result.get('enhanced_quality_score', quality_score)
+                    consolidation_weeks = arc_result.get('consolidation_weeks', 0)
+                    
+                    if 'talib_analysis' in arc_result:
+                        title = f"{code} {name} 增强评分: {enhanced_score:.3f} 盘整: {consolidation_weeks}周 R²={r2:.2f}"
+                    else:
+                        title = f"{code} {name} 质量评分: {quality_score:.3f} 盘整: {consolidation_weeks}周 R²={r2:.2f}"
                 else:
+                    # 默认格式
                     start = arc_result.get('start', 0)
                     end = arc_result.get('end', 0)
                     r2 = arc_result.get('r2', 0)
