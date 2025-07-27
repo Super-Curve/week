@@ -256,6 +256,9 @@ class ArcChartGenerator(BaseChartGenerator):
         try:
             price_info = normalized_data['price_info']
             
+            # 首先绘制最高价格线（所有类型的图表都需要）
+            self._draw_highest_price_line(draw, x_coords, y_coords, normalized_data)
+            
             # 检查是否为相似度分析结果
             if arc_result.get('type') in ['similarity_based', 'similarity_analysis']:
                 self._draw_similarity_features(draw, arc_result, x_coords, y_coords, normalized_data)
@@ -267,6 +270,137 @@ class ArcChartGenerator(BaseChartGenerator):
         except Exception as e:
             print(f"绘制大弧底特征失败: {e}")
     
+    def _draw_highest_price_line(self, draw, x_coords, y_coords, normalized_data):
+        """绘制最高价格线标注"""
+        try:
+            price_info = normalized_data['price_info']
+            max_price = price_info['global_max']
+            
+            # 找到最高价格对应的所有索引
+            max_price_indices = []
+            for i, price in enumerate(normalized_data['high']):  # 使用high价格数据
+                real_price = self.denormalize_price(price, price_info)
+                if abs(real_price - max_price) < max_price * 0.005:  # 0.5%的误差范围
+                    max_price_indices.append(i)
+            
+            if max_price_indices:
+                # 使用第一个最高价点
+                max_idx = max_price_indices[0]
+                if max_idx < len(x_coords):
+                    # 绘制最高价格水平线（贯穿整个图表）
+                    max_price_y = self.normalize_price_for_display(max_price, price_info)
+                    chart_left = 60
+                    chart_right = self.width - 10
+                    
+                    # 绘制红色实线
+                    draw.line([(chart_left, max_price_y), (chart_right, max_price_y)], 
+                             fill='red', width=2)
+                    
+                    # 在右侧添加价格标注
+                    font, _ = self.get_fonts()
+                    draw.text((chart_right - 120, max_price_y - 20), 
+                             f"最高价: {max_price:.2f}", 
+                             fill='red', font=font)
+                    
+                    # 在最高价点添加标记
+                    x = x_coords[max_idx]
+                    y = y_coords[max_idx]
+                    draw.ellipse([(x-4, y-4), (x+4, y+4)], fill='red', outline='darkred', width=2)
+                    
+                    # 验证并标注低位区间范围
+                    self._draw_price_validation_zones(draw, max_price, price_info, x_coords)
+                    
+        except Exception as e:
+            print(f"绘制最高价格线失败: {e}")
+    
+    def _draw_price_validation_zones(self, draw, max_price, price_info, x_coords):
+        """绘制价格验证区间（最高价/3的0.8-1.2倍）"""
+        try:
+            # 计算理论低位区间
+            base_price = max_price / 3
+            zone_low = base_price * 0.8
+            zone_high = base_price * 1.2
+            
+            # 转换为图表坐标
+            zone_low_y = self.normalize_price_for_display(zone_low, price_info)
+            zone_high_y = self.normalize_price_for_display(zone_high, price_info)
+            
+            chart_left = 60
+            chart_right = self.width - 10
+            
+            # 绘制理论低位区间（虚线）
+            self._draw_dashed_line(draw, chart_left, zone_low_y, chart_right, zone_low_y, 'blue', width=2)
+            self._draw_dashed_line(draw, chart_left, zone_high_y, chart_right, zone_high_y, 'blue', width=2)
+            
+            # 添加标注
+            font, small_font = self.get_fonts()
+            draw.text((chart_right - 180, zone_low_y + 5), 
+                     f"理论低位下限: {zone_low:.2f}", 
+                     fill='blue', font=small_font)
+            draw.text((chart_right - 180, zone_high_y - 20), 
+                     f"理论低位上限: {zone_high:.2f}", 
+                     fill='blue', font=small_font)
+            
+            # 检查实际最低价是否在理论区间内
+            actual_min = price_info['global_min']
+            is_in_zone = zone_low <= actual_min <= zone_high
+            
+            # 在左上角显示验证结果
+            validation_text = f"低位验证: {'✓' if is_in_zone else '✗'}"
+            validation_color = 'green' if is_in_zone else 'red'
+            draw.text((70, 60), validation_text, fill=validation_color, font=font)
+            
+            # 显示具体数值
+            draw.text((70, 80), f"实际最低: {actual_min:.2f}", fill='black', font=small_font)
+            draw.text((70, 95), f"理论区间: {zone_low:.2f}-{zone_high:.2f}", fill='blue', font=small_font)
+            
+            # 计算偏差百分比
+            if is_in_zone:
+                ratio_text = f"符合预期区间"
+            else:
+                if actual_min < zone_low:
+                    deviation = ((zone_low - actual_min) / zone_low) * 100
+                    ratio_text = f"低于预期 {deviation:.1f}%"
+                else:
+                    deviation = ((actual_min - zone_high) / zone_high) * 100
+                    ratio_text = f"高于预期 {deviation:.1f}%"
+            
+            draw.text((70, 110), ratio_text, fill=validation_color, font=small_font)
+            
+        except Exception as e:
+            print(f"绘制价格验证区间失败: {e}")
+    
+    def _draw_dashed_line(self, draw, x1, y1, x2, y2, color, width=1, dash_length=8, gap_length=4):
+        """绘制虚线"""
+        try:
+            total_length = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+            if total_length == 0:
+                return
+            
+            # 计算方向向量
+            dx = (x2 - x1) / total_length
+            dy = (y2 - y1) / total_length
+            
+            # 绘制虚线段
+            current_pos = 0
+            while current_pos < total_length:
+                # 计算当前段的起点和终点
+                start_x = x1 + dx * current_pos
+                start_y = y1 + dy * current_pos
+                
+                end_pos = min(current_pos + dash_length, total_length)
+                end_x = x1 + dx * end_pos
+                end_y = y1 + dy * end_pos
+                
+                # 绘制线段
+                draw.line([(start_x, start_y), (end_x, end_y)], fill=color, width=width)
+                
+                # 移动到下一段的起点
+                current_pos = end_pos + gap_length
+                
+        except Exception as e:
+            print(f"绘制虚线失败: {e}")
+
     def _draw_similarity_features(self, draw, arc_result, x_coords, y_coords, normalized_data):
         """绘制相似度分析的特征"""
         price_info = normalized_data['price_info']

@@ -53,3 +53,5 @@ venv.bak/
 # Temporary files
 *.tmp
 *.temp
+cache/cache_info.txt
+cache/weekly_data.pkl

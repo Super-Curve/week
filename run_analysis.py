@@ -19,7 +19,7 @@ def print_banner():
     ║                    📈 A股技术分析平台                          ║
     ║              Professional Stock Technical Analysis            ║
     ║                                                              ║
-    ║  🎯 大弧底检测  📊 波动率分析  📈 K线图表  🔄 相似度分析        ║
+    ║  🎯 大弧底检测  📈 上升通道  📊 波动率分析  📈 K线图表  🔄 相似度分析  ║
     ╚══════════════════════════════════════════════════════════════╝
     """
     print(banner)
@@ -102,11 +102,37 @@ def run_arc_analysis(args):
     
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print("✅ 大弧底分析完成")
+        print("✅ 大弧底形态分析完成")
         print(f"📁 输出目录: output/arc/")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ 大弧底分析失败: {e}")
+        print(f"❌ 大弧底形态分析失败: {e}")
+        print(f"错误输出: {e.stderr}")
+        return False
+
+def run_uptrend_analysis(args):
+    """运行上升通道分析"""
+    print("\n📈 启动上升通道分析...")
+    
+    cmd = [
+        sys.executable, 'main_uptrend.py',
+        '--csv', args.csv,
+        '--output', 'output/uptrend'
+    ]
+    
+    if args.max:
+        cmd.extend(['--max', str(args.max)])
+    
+    if args.clear_cache:
+        cmd.append('--clear-cache')
+    
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print("✅ 上升通道分析完成")
+        print(f"📁 输出目录: output/uptrend/")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ 上升通道分析失败: {e}")
         print(f"错误输出: {e.stderr}")
         return False
 
@@ -164,12 +190,13 @@ def run_all_analysis(args):
     print("\n🚀 启动完整分析流程...")
     
     success_count = 0
-    total_count = 4
+    total_count = 5
     
     # 按顺序运行所有分析
     analyses = [
         ('K线图分析', run_kline_analysis),
         ('大弧底分析', run_arc_analysis),
+        ('上升通道分析', run_uptrend_analysis),
         ('波动率分析', run_volatility_analysis),
         ('相似度分析', run_similarity_analysis)
     ]
@@ -214,6 +241,7 @@ def main():
   python run_analysis.py all                    # 运行所有分析
   python run_analysis.py kline --max 100        # 只运行K线分析，限制100只股票
   python run_analysis.py arc --clear-cache      # 运行大弧底分析并清除缓存
+  python run_analysis.py uptrend --max 50       # 运行上升通道分析，限制50只股票
   python run_analysis.py volatility             # 只运行波动率分析
   python run_analysis.py similarity             # 只运行相似度分析
   python run_analysis.py --open-browser         # 只打开浏览器查看结果
@@ -222,7 +250,7 @@ def main():
     
     parser.add_argument(
         'analysis_type',
-        choices=['all', 'kline', 'arc', 'volatility', 'similarity'],
+        choices=['all', 'kline', 'arc', 'uptrend', 'volatility', 'similarity'],
         nargs='?',
         default='all',
         help='要运行的分析类型 (默认: all)'
@@ -284,6 +312,8 @@ def main():
         success = run_kline_analysis(args)
     elif args.analysis_type == 'arc':
         success = run_arc_analysis(args)
+    elif args.analysis_type == 'uptrend':
+        success = run_uptrend_analysis(args)
     elif args.analysis_type == 'volatility':
         success = run_volatility_analysis(args)
     elif args.analysis_type == 'similarity':
