@@ -7,7 +7,7 @@ import argparse
 from src.core.stock_data_processor import StockDataProcessor
 from src.similarity.image_similarity import find_similar_stocks
 from src.generators.chart_generator import FastChartGenerator
-from src.utils.html_generator import SimilarityHTMLGenerator
+# from src.utils.html_generator import SimilarityHTMLGenerator  # 暂时注释掉
 
 def main():
     parser = argparse.ArgumentParser(description='K线图像相似度分析')
@@ -63,16 +63,42 @@ def main():
     for code, score, img_path in result:
         print(f'{code}\t相似度: {score:.4f}\t图片: {img_path}')
 
-    # 生成HTML报告
+    # 生成HTML报告（暂时简化）
     output_dir = 'output/similarity'
     os.makedirs(output_dir, exist_ok=True)
     
-    html_generator = SimilarityHTMLGenerator(output_dir)
-    html_path = html_generator.generate_similarity_report(
-        target_code=target_code,
-        similar_stocks=result,
-        target_img_path=target_img_path
-    )
+    # 生成简单的HTML报告
+    html_path = os.path.join(output_dir, 'similarity_analysis.html')
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>相似度分析 - {target_code}</title>
+    <meta charset="utf-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .stock-item {{ margin: 10px 0; padding: 10px; border: 1px solid #ddd; }}
+        .similarity-score {{ color: #007bff; font-weight: bold; }}
+    </style>
+</head>
+<body>
+    <h1>与 {target_code} 最相似的前{top_n}只股票</h1>
+    <div class="target-stock">
+        <h2>目标股票: {target_code}</h2>
+        <img src="../kline_images/{target_code}.png" alt="{target_code}" style="max-width: 400px;">
+    </div>
+    <h2>相似股票列表:</h2>
+''')
+        
+        for i, (code, score, img_path) in enumerate(result, 1):
+            f.write(f'''    <div class="stock-item">
+        <h3>{i}. {code} <span class="similarity-score">(相似度: {score:.4f})</span></h3>
+        <img src="../kline_images/{code}.png" alt="{code}" style="max-width: 400px;">
+    </div>
+''')
+        
+        f.write('''</body>
+</html>''')
     
     print(f'\n相似度分析HTML报告已生成: {html_path}')
 

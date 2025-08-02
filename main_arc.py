@@ -123,7 +123,7 @@ def detect_and_generate_charts(stock_data, output_dir):
         sorted_results = sorted(similarity_results.items(), 
                                key=lambda x: x[1]['similarity_score'], 
                                reverse=True)
-        top_100 = dict(sorted_results[:100])
+        top_100 = dict(sorted_results[:200])
         
         # 为TOP100生成图表
         top_100_with_charts = {}

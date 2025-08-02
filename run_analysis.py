@@ -166,14 +166,18 @@ def run_similarity_analysis(args):
     """运行相似度分析"""
     print("\n🔄 启动相似度分析...")
     
+    # 相似度分析需要目标股票，我们使用一个默认的股票代码
+    # 这里使用一个常见的股票代码作为示例
+    target_stock = "000001.SZ"  # 平安银行
+    
     cmd = [
         sys.executable, 'main_similarity.py',
         '--csv', args.csv,
-        '--output', 'output/similarity'
+        '--target', target_stock,
+        '--top', '10'
     ]
     
-    if args.max:
-        cmd.extend(['--max', str(args.max)])
+    # 相似度分析不支持--max参数，所以不添加
     
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)

@@ -56,7 +56,7 @@ class UptrendChannelAnalyzer:
         
         # 0. 智能波动率过滤（优化版）
         if volatility_filter:
-            filtered_data = self._apply_intelligent_volatility_filter(prices, high_prices, low_prices)
+            filtered_data = self._apply_intelligent_volatility_filter_enhanced(prices, high_prices, low_prices)
             if filtered_data is None:
                 return None
             
@@ -67,10 +67,11 @@ class UptrendChannelAnalyzer:
         else:
             volatility_stats = None
         
-        # 1. 专业关键点识别
+        # 1. 专业关键点识别（已重构）
         if recent_focus:
-            # 专注最近趋势：只分析最近60%的数据
-            recent_start = int(len(prices) * 0.4)
+            # 专注最近趋势：只分析最近3个月（约12-13周）的数据
+            recent_weeks = min(13, len(prices))  # 最多13周，约3个月
+            recent_start = len(prices) - recent_weeks
             recent_high_prices = high_prices[recent_start:]
             recent_low_prices = low_prices[recent_start:]
             
@@ -85,14 +86,20 @@ class UptrendChannelAnalyzer:
         if len(peaks) < 2 or len(troughs) < 2:
             return None
         
-        # 2. 专业通道线识别
-        upper_channel = self._identify_professional_upper_channel(peaks, high_prices)
-        if not upper_channel:
-            return None
-        
-        lower_channel = self._identify_professional_lower_channel(troughs, low_prices)
-        if not lower_channel:
-            return None
+        # 2. 使用约束优化拟合平行通道线
+        parallel_channels = self._fit_parallel_channels_optimized(peaks, troughs, high_prices, low_prices)
+        if not parallel_channels:
+            # 如果约束优化失败，回退到传统方法
+            upper_channel = self._identify_professional_upper_channel(peaks, high_prices)
+            if not upper_channel:
+                return None
+            
+            lower_channel = self._identify_professional_lower_channel(troughs, low_prices)
+            if not lower_channel:
+                return None
+        else:
+            upper_channel = parallel_channels['upper_channel']
+            lower_channel = parallel_channels['lower_channel']
         
         # 3. 专业通道质量验证
         channel_quality = self._validate_professional_channel_quality(
@@ -145,62 +152,104 @@ class UptrendChannelAnalyzer:
         }
     
     def _find_professional_key_points(self, high_prices, low_prices):
-        """专业关键点识别 - 考虑价格重要性和趋势连续性"""
-        # 1. 基础极值点识别
-        peaks = argrelextrema(high_prices, np.greater, order=3)[0]
-        troughs = argrelextrema(low_prices, np.less, order=3)[0]
+        """专业关键点识别 - 考虑价格重要性和趋势连续性 (重构版)"""
+        # 1. 基础极值点识别 - 使用更灵活的order参数
+        min_order = max(2, len(high_prices) // 20)  # 动态调整order
+        peaks = argrelextrema(high_prices, np.greater, order=min_order)[0]
+        troughs = argrelextrema(low_prices, np.less, order=min_order)[0]
         
-        # 2. 价格重要性过滤
+        # 2. 改进的价格重要性过滤
         significant_peaks = []
         for peak_idx in peaks:
             peak_price = high_prices[peak_idx]
-            # 计算局部重要性（与周围价格的差异）
-            left_range = max(0, peak_idx - 5)
-            right_range = min(len(high_prices), peak_idx + 6)
-            local_avg = np.mean(high_prices[left_range:right_range])
-            importance = (peak_price - local_avg) / local_avg
+            # 使用更大的窗口计算局部重要性
+            window_size = max(5, len(high_prices) // 15)
+            left_range = max(0, peak_idx - window_size)
+            right_range = min(len(high_prices), peak_idx + window_size + 1)
             
-            if importance > 0.02:  # 2%以上的重要性
-                significant_peaks.append((peak_idx, peak_price))
+            # 计算相对重要性和绝对重要性
+            local_avg = np.mean(high_prices[left_range:right_range])
+            local_std = np.std(high_prices[left_range:right_range])
+            
+            # 相对重要性：价格相对于局部平均值的百分比
+            relative_importance = (peak_price - local_avg) / local_avg
+            # 绝对重要性：价格相对于局部标准差的倍数
+            absolute_importance = (peak_price - local_avg) / (local_std + 1e-8)
+            
+            # 统计显著性阈值：2%相对重要性或1.5倍标准差
+            if relative_importance > 0.02 or absolute_importance > 1.5:
+                # 计算质量评分
+                quality_score = relative_importance * 0.6 + (absolute_importance / 3.0) * 0.4
+                significant_peaks.append((peak_idx, peak_price, quality_score))
         
         significant_troughs = []
         for trough_idx in troughs:
             trough_price = low_prices[trough_idx]
-            left_range = max(0, trough_idx - 5)
-            right_range = min(len(low_prices), trough_idx + 6)
-            local_avg = np.mean(low_prices[left_range:right_range])
-            importance = (local_avg - trough_price) / local_avg
+            window_size = max(5, len(low_prices) // 15)
+            left_range = max(0, trough_idx - window_size)
+            right_range = min(len(low_prices), trough_idx + window_size + 1)
             
-            if importance > 0.02:  # 2%以上的重要性
-                significant_troughs.append((trough_idx, trough_price))
+            local_avg = np.mean(low_prices[left_range:right_range])
+            local_std = np.std(low_prices[left_range:right_range])
+            
+            relative_importance = (local_avg - trough_price) / local_avg
+            absolute_importance = (local_avg - trough_price) / (local_std + 1e-8)
+            
+            if relative_importance > 0.02 or absolute_importance > 1.5:
+                quality_score = relative_importance * 0.6 + (absolute_importance / 3.0) * 0.4
+                significant_troughs.append((trough_idx, trough_price, quality_score))
         
-        # 3. 趋势连续性过滤
-        filtered_peaks = self._filter_trend_continuity(significant_peaks, 'peak')
-        filtered_troughs = self._filter_trend_continuity(significant_troughs, 'trough')
+        # 3. 按质量评分排序并限制数量
+        significant_peaks.sort(key=lambda x: x[2], reverse=True)
+        significant_troughs.sort(key=lambda x: x[2], reverse=True)
+        
+        # 保留质量最高的关键点（最多保留总数据点的20%）
+        max_peaks = max(3, min(10, len(high_prices) // 5))
+        max_troughs = max(3, min(10, len(low_prices) // 5))
+        
+        significant_peaks = significant_peaks[:max_peaks]
+        significant_troughs = significant_troughs[:max_troughs]
+        
+        # 4. 改进的趋势连续性过滤
+        filtered_peaks = self._filter_trend_continuity_enhanced(significant_peaks, 'peak')
+        filtered_troughs = self._filter_trend_continuity_enhanced(significant_troughs, 'trough')
         
         return filtered_peaks, filtered_troughs
     
-    def _filter_trend_continuity(self, points, point_type):
-        """过滤趋势连续性 - 确保关键点形成合理的趋势"""
+    def _filter_trend_continuity_enhanced(self, points, point_type):
+        """增强的趋势连续性过滤 - 确保关键点形成合理的上升趋势"""
         if len(points) < 2:
-            return points
+            return [(idx, price) for idx, price, _ in points]
         
+        # 按时间顺序排序
+        points_sorted = sorted(points, key=lambda x: x[0])
         filtered = []
-        for i, (idx, price) in enumerate(points):
+        
+        for i, (idx, price, quality) in enumerate(points_sorted):
             if i == 0:
                 filtered.append((idx, price))
                 continue
             
             # 检查与前一个点的趋势连续性
             prev_idx, prev_price = filtered[-1]
+            time_gap = idx - prev_idx
+            
+            # 动态时间间隔要求：至少3个周期，但根据数据长度调整
+            min_gap = max(3, len(points_sorted) // 10)
             
             if point_type == 'peak':
-                # 高点应该形成上升趋势
-                if price > prev_price and (idx - prev_idx) >= 3:
+                # 高点应该形成上升趋势，考虑时间间隔和价格增长
+                price_growth = (price - prev_price) / prev_price
+                if price > prev_price and time_gap >= min_gap and price_growth > 0.01:
+                    filtered.append((idx, price))
+                elif len(filtered) == 1 and quality > 0.05:  # 如果质量足够高，允许第二个点
                     filtered.append((idx, price))
             else:
-                # 低点应该形成上升趋势
-                if price > prev_price and (idx - prev_idx) >= 3:
+                # 低点应该形成上升趋势（底部抬高）
+                price_growth = (price - prev_price) / prev_price
+                if price > prev_price and time_gap >= min_gap and price_growth > 0.01:
+                    filtered.append((idx, price))
+                elif len(filtered) == 1 and quality > 0.05:
                     filtered.append((idx, price))
         
         return filtered
@@ -723,13 +772,13 @@ class UptrendChannelAnalyzer:
             r2 = 0
         
         # 2. 检查是否满足基本上升趋势
-        if slope < min_slope or r2 < 0.2:  # 降低R²要求到0.2
+        if slope < min_slope or r2 < 0.1:  # 进一步降低R²要求到0.1
             return None
         
         # 3. 寻找最近的关键点
         peaks, troughs = self._find_professional_key_points(recent_high, recent_low)
         
-        if len(peaks) < 2 or len(troughs) < 2:
+        if len(peaks) < 1 or len(troughs) < 1:  # 降低要求到至少1个峰值和1个谷值
             return None
         
         # 4. 分析通道特征
@@ -777,7 +826,7 @@ class UptrendChannelAnalyzer:
             avg_range = np.mean(price_ranges)
             
             # 检查通道质量
-            if avg_range < 0.02 or avg_range > 0.15:  # 2%-15%的合理范围
+            if avg_range < 0.01 or avg_range > 0.2:  # 1%-20%的合理范围
                 return None
             
             # 计算价格在通道中的位置
@@ -1074,36 +1123,73 @@ class UptrendChannelAnalyzer:
             }
             
         except Exception as e:
-            print(f"波动率过滤失败: {e}")
+            print("波动率过滤失败:", str(e))
             return None
     
     def _calculate_volatility_statistics(self, prices, high_prices, low_prices):
-        """计算波动率统计指标"""
+        """计算波动率统计指标 - 改进版"""
         # 1. 计算收益率
         returns = np.diff(prices) / prices[:-1]
         
-        # 2. 计算滚动波动率（20期）
-        window = min(20, len(returns))
-        rolling_vol = np.array([np.std(returns[max(0, i-window+1):i+1]) for i in range(len(returns))])
+        # 2. 计算20期滚动波动率
+        window = 20
+        rolling_vol = []
+        for i in range(len(returns)):
+            start_idx = max(0, i - window + 1)
+            end_idx = i + 1
+            window_returns = returns[start_idx:end_idx]
+            if len(window_returns) > 1:
+                vol = np.std(window_returns) * np.sqrt(252)  # 年化波动率
+            else:
+                vol = 0
+            rolling_vol.append(vol)
         
-        # 3. 计算真实波动率（TR）
+        rolling_vol = np.array(rolling_vol)
+        
+        # 3. 计算真实波动率（TR）- 更精确的版本
         tr_values = []
         for i in range(1, len(prices)):
             high_low = high_prices[i] - low_prices[i]
             high_close = abs(high_prices[i] - prices[i-1])
             low_close = abs(low_prices[i] - prices[i-1])
             tr = max(high_low, high_close, low_close)
-            tr_values.append(tr / prices[i-1])  # 标准化
+            tr_values.append(tr / prices[i-1])  # 标准化为百分比
         
         tr_values = np.array(tr_values)
         
-        # 4. 计算ATR（平均真实波动率）
-        atr_period = min(14, len(tr_values))
-        atr = np.array([np.mean(tr_values[max(0, i-atr_period+1):i+1]) for i in range(len(tr_values))])
+        # 4. 计算ATR（14期平均真实波动率）
+        atr_period = 14
+        atr = []
+        for i in range(len(tr_values)):
+            start_idx = max(0, i - atr_period + 1)
+            end_idx = i + 1
+            window_tr = tr_values[start_idx:end_idx]
+            atr.append(np.mean(window_tr))
         
-        # 5. 计算波动率分位数
-        vol_percentiles = np.percentile(rolling_vol, [25, 50, 75, 90, 95])
-        tr_percentiles = np.percentile(tr_values, [25, 50, 75, 90, 95])
+        atr = np.array(atr)
+        
+        # 5. 计算关键分位数 - 重点关注90分位数
+        vol_percentiles = np.percentile(rolling_vol, [10, 25, 50, 75, 90, 95, 99])
+        tr_percentiles = np.percentile(tr_values, [10, 25, 50, 75, 90, 95, 99])
+        
+        # 6. 分析波动率特征
+        mean_vol = np.mean(rolling_vol)
+        std_vol = np.std(rolling_vol)
+        
+        # 7. 波动率分类
+        if mean_vol < 0.03:  # 低波动率 < 3%
+            volatility_category = 'low'
+            filter_strength = 'light'
+        elif mean_vol < 0.05:  # 中等波动率 3-5%
+            volatility_category = 'medium'
+            filter_strength = 'standard'
+        else:  # 高波动率 > 5%
+            volatility_category = 'high'
+            filter_strength = 'disabled'
+        
+        # 8. 异常检测阈值 - 90分位数
+        anomaly_threshold_vol = vol_percentiles[4]  # 90分位数
+        anomaly_threshold_tr = tr_percentiles[4]   # 90分位数
         
         return {
             'returns': returns,
@@ -1112,45 +1198,54 @@ class UptrendChannelAnalyzer:
             'atr': atr,
             'vol_percentiles': vol_percentiles,
             'tr_percentiles': tr_percentiles,
-            'mean_vol': np.mean(rolling_vol),
-            'std_vol': np.std(rolling_vol),
+            'mean_vol': mean_vol,
+            'std_vol': std_vol,
             'mean_tr': np.mean(tr_values),
-            'std_tr': np.std(tr_values)
+            'std_tr': np.std(tr_values),
+            'volatility_category': volatility_category,
+            'filter_strength': filter_strength,
+            'anomaly_threshold_vol': anomaly_threshold_vol,
+            'anomaly_threshold_tr': anomaly_threshold_tr
         }
-    
-    def _identify_volatility_outliers(self, prices, high_prices, low_prices, volatility_stats):
-        """识别波动率异常点"""
+        
+    def _identify_volatility_outliers_enhanced(self, prices, high_prices, low_prices, volatility_stats):
+        """增强的波动率异常点识别 - 使用90分位数阈值"""
         outlier_indices = []
         
-        # 1. 基于滚动波动率的异常检测
-        vol_threshold = volatility_stats['vol_percentiles'][3]  # 90分位数
-        vol_outliers = np.where(volatility_stats['rolling_volatility'] > vol_threshold)[0]
-        outlier_indices.extend(vol_outliers)
+        # 获取阈值
+        vol_threshold = volatility_stats['anomaly_threshold_vol']
+        tr_threshold = volatility_stats['anomaly_threshold_tr']
+        rolling_vol = volatility_stats['rolling_volatility']
+        tr_values = volatility_stats['true_range']
         
-        # 2. 基于真实波动率的异常检测
-        tr_threshold = volatility_stats['tr_percentiles'][3]  # 90分位数
-        tr_outliers = np.where(volatility_stats['true_range'] > tr_threshold)[0]
-        outlier_indices.extend(tr_outliers)
+        # 根据波动率分类调整过滤策略
+        filter_strength = volatility_stats['filter_strength']
         
-        # 3. 基于价格跳跃的异常检测
-        price_jumps = np.abs(np.diff(prices)) / prices[:-1]
-        jump_threshold = np.percentile(price_jumps, 95)  # 95分位数
-        jump_outliers = np.where(price_jumps > jump_threshold)[0]
-        outlier_indices.extend(jump_outliers)
+        if filter_strength == 'disabled':
+            # 高波动率股票：不进行过滤
+            return outlier_indices
+        elif filter_strength == 'light':
+            # 低波动率股票：轻微过滤，只过滤极端异常
+            vol_multiplier = 2.0
+            tr_multiplier = 2.0
+        else:
+            # 中等波动率股票：标准过滤
+            vol_multiplier = 1.0
+            tr_multiplier = 1.0
         
-        # 4. 基于高低价差的异常检测
-        price_spreads = (high_prices - low_prices) / prices
-        spread_threshold = np.percentile(price_spreads, 95)  # 95分位数
-        spread_outliers = np.where(price_spreads > spread_threshold)[0]
-        outlier_indices.extend(spread_outliers)
-        
-        # 去重并排序
-        outlier_indices = sorted(list(set(outlier_indices)))
-        
-        # 限制过滤点数量（不超过总数据的20%）
-        max_filtered = int(len(prices) * 0.2)
-        if len(outlier_indices) > max_filtered:
-            outlier_indices = outlier_indices[:max_filtered]
+        # 识别异常点
+        for i in range(len(rolling_vol)):
+            vol_anomaly = rolling_vol[i] > vol_threshold * vol_multiplier
+            
+            # TR异常检测（从第二个点开始）
+            if i < len(tr_values):
+                tr_anomaly = tr_values[i] > tr_threshold * tr_multiplier
+            else:
+                tr_anomaly = False
+            
+            # 如果同时满足波动率和TR异常条件，标记为异常点
+            if vol_anomaly and tr_anomaly:
+                outlier_indices.append(i + 1)  # +1 因为returns比prices少一个元素
         
         return outlier_indices
     
@@ -1281,7 +1376,7 @@ class UptrendChannelAnalyzer:
                 }
             
         except Exception as e:
-            print(f"智能波动率过滤失败: {e}")
+            print("智能波动率过滤失败:", str(e))
             return None
     
     def _determine_intelligent_filter_strategy(self, volatility_stats):
@@ -1406,7 +1501,7 @@ class UptrendChannelAnalyzer:
             'prices': smoothed_prices,
             'high_prices': smoothed_high,
             'low_prices': smoothed_low,
-            'method': f'intelligent_smoothing_{strategy["filter_intensity"]}'
+            'method': 'intelligent_smoothing_' + str(strategy.get("filter_intensity", "unknown"))
         }
     
     def _apply_intelligent_volatility_boost(self, base_score, volatility_stats, channel_quality):
@@ -1451,3 +1546,340 @@ class UptrendChannelAnalyzer:
         
         enhanced_score = min(1.0, base_score + boost)
         return enhanced_score 
+
+    def _fit_parallel_channels_optimized(self, peaks, troughs, high_prices, low_prices):
+        """
+        使用约束优化拟合严格平行的上升通道
+        
+        Args:
+            peaks: 高点列表 [(idx, price), ...]
+            troughs: 低点列表 [(idx, price), ...]
+            high_prices: 最高价序列
+            low_prices: 最低价序列
+            
+        Returns:
+            dict: 优化后的通道线参数
+        """
+        if len(peaks) < 2 or len(troughs) < 2:
+            return None
+        
+        try:
+            from scipy.optimize import minimize
+            
+            # 准备数据
+            peak_x = np.array([p[0] for p in peaks])
+            peak_y = np.array([p[1] for p in peaks])
+            trough_x = np.array([t[0] for t in troughs])
+            trough_y = np.array([t[1] for t in troughs])
+            
+            # 初始估计：使用最小二乘法
+            initial_slope_upper = np.polyfit(peak_x, peak_y, 1)[0]
+            initial_slope_lower = np.polyfit(trough_x, trough_y, 1)[0]
+            initial_slope = (initial_slope_upper + initial_slope_lower) / 2
+            
+            # 计算初始截距
+            initial_intercept_upper = np.mean(peak_y - initial_slope * peak_x)
+            initial_intercept_lower = np.mean(trough_y - initial_slope * trough_x)
+            
+            # 确保上轨在下轨之上
+            if initial_intercept_upper < initial_intercept_lower:
+                initial_intercept_upper, initial_intercept_lower = initial_intercept_lower, initial_intercept_upper
+            
+            # 目标函数：最小化拟合误差和通道宽度方差
+            def objective_function(params):
+                slope, intercept_upper, intercept_lower = params
+                
+                # 上轨拟合误差
+                upper_errors = peak_y - (slope * peak_x + intercept_upper)
+                upper_mse = np.mean(upper_errors ** 2)
+                
+                # 下轨拟合误差
+                lower_errors = trough_y - (slope * trough_x + intercept_lower)
+                lower_mse = np.mean(lower_errors ** 2)
+                
+                # 通道宽度方差（希望宽度稳定）
+                data_range = max(np.max(peak_x), np.max(trough_x)) - min(np.min(peak_x), np.min(trough_x))
+                if data_range > 0:
+                    x_eval = np.linspace(min(np.min(peak_x), np.min(trough_x)), 
+                                       max(np.max(peak_x), np.max(trough_x)), 10)
+                    upper_line = slope * x_eval + intercept_upper
+                    lower_line = slope * x_eval + intercept_lower
+                    channel_widths = upper_line - lower_line
+                    width_variance = np.var(channel_widths)
+                else:
+                    width_variance = 0
+                
+                # 组合目标函数
+                total_error = upper_mse + lower_mse + width_variance * 0.1
+                
+                return total_error
+            
+            # 约束条件
+            def constraint_positive_slope(params):
+                slope, _, _ = params
+                return slope  # slope > 0
+            
+            def constraint_upper_above_lower(params):
+                _, intercept_upper, intercept_lower = params
+                return intercept_upper - intercept_lower  # upper > lower
+            
+            constraints = [
+                {'type': 'ineq', 'fun': constraint_positive_slope},
+                {'type': 'ineq', 'fun': constraint_upper_above_lower}
+            ]
+            
+            # 参数边界
+            bounds = [
+                (0.001, 1.0),  # slope: 正值，不超过45度
+                (None, None),   # intercept_upper: 无限制
+                (None, None)    # intercept_lower: 无限制
+            ]
+            
+            # 执行优化
+            initial_params = [initial_slope, initial_intercept_upper, initial_intercept_lower]
+            result = minimize(
+                objective_function, 
+                initial_params,
+                method='SLSQP',
+                bounds=bounds,
+                constraints=constraints,
+                options={'maxiter': 1000, 'ftol': 1e-9}
+            )
+            
+            if result.success:
+                optimal_slope, optimal_intercept_upper, optimal_intercept_lower = result.x
+                
+                # 计算拟合质量指标
+                upper_pred = optimal_slope * peak_x + optimal_intercept_upper
+                lower_pred = optimal_slope * trough_x + optimal_intercept_lower
+                
+                # R²计算
+                upper_ss_res = np.sum((peak_y - upper_pred) ** 2)
+                upper_ss_tot = np.sum((peak_y - np.mean(peak_y)) ** 2)
+                upper_r2 = 1 - (upper_ss_res / (upper_ss_tot + 1e-8))
+                
+                lower_ss_res = np.sum((trough_y - lower_pred) ** 2)
+                lower_ss_tot = np.sum((trough_y - np.mean(trough_y)) ** 2)
+                lower_r2 = 1 - (lower_ss_res / (lower_ss_tot + 1e-8))
+                
+                # 平均R²
+                avg_r2 = (upper_r2 + lower_r2) / 2
+                
+                # 通道宽度稳定性
+                channel_width = optimal_intercept_upper - optimal_intercept_lower
+                
+                return {
+                    'upper_channel': {
+                        'slope': optimal_slope,
+                        'intercept': optimal_intercept_upper,
+                        'r2': upper_r2,
+                        'start_idx': int(np.min(peak_x)),
+                        'end_idx': int(np.max(peak_x)),
+                        'fit_quality': upper_r2
+                    },
+                    'lower_channel': {
+                        'slope': optimal_slope,  # 确保平行
+                        'intercept': optimal_intercept_lower,
+                        'r2': lower_r2,
+                        'start_idx': int(np.min(trough_x)),
+                        'end_idx': int(np.max(trough_x)),
+                        'fit_quality': lower_r2
+                    },
+                    'channel_quality': {
+                        'avg_r2': avg_r2,
+                        'channel_width': channel_width,
+                        'slope_consistency': 1.0,  # 完全平行
+                        'optimization_success': True,
+                        'optimization_error': result.fun
+                    }
+                }
+            else:
+                print("优化失败:", result.message)
+                return None
+                
+        except Exception as e:
+            print("约束优化失败:", str(e))
+            return None 
+
+    def _apply_intelligent_volatility_filter_enhanced(self, prices, high_prices, low_prices):
+        """
+        增强版智能波动率过滤 - 根据波动率特征自动调整过滤强度
+        
+        Args:
+            prices: 收盘价序列
+            high_prices: 最高价序列
+            low_prices: 最低价序列
+            
+        Returns:
+            dict: 过滤后的数据和波动率统计
+        """
+        try:
+            # 1. 计算增强版波动率统计指标
+            volatility_stats = self._calculate_volatility_statistics(prices, high_prices, low_prices)
+            
+            # 2. 智能确定过滤策略
+            filter_strategy = self._determine_enhanced_filter_strategy(volatility_stats)
+            
+            # 3. 根据策略应用过滤
+            if filter_strategy['apply_filter']:
+                outlier_indices = self._identify_volatility_outliers_enhanced(
+                    prices, high_prices, low_prices, volatility_stats
+                )
+                
+                if len(outlier_indices) > 0:
+                    smoothed_data = self._apply_intelligent_smoothing_enhanced(
+                        prices, high_prices, low_prices, outlier_indices, volatility_stats, filter_strategy
+                    )
+                    
+                    # 4. 验证过滤效果
+                    if not self._validate_filtered_data_enhanced(smoothed_data, volatility_stats):
+                        return None
+                    
+                    # 更新波动率统计
+                    volatility_stats.update({
+                        'filter_strategy': filter_strategy,
+                        'filtered_points': len(outlier_indices),
+                        'smoothing_method': smoothed_data['method']
+                    })
+                    
+                    return {
+                        'prices': smoothed_data['prices'],
+                        'high_prices': smoothed_data['high_prices'],
+                        'low_prices': smoothed_data['low_prices'],
+                        'volatility_stats': volatility_stats
+                    }
+                else:
+                    # 没有检测到异常点，返回原始数据
+                    volatility_stats.update({
+                        'filter_strategy': filter_strategy,
+                        'filtered_points': 0,
+                        'smoothing_method': 'none'
+                    })
+                    
+                    return {
+                        'prices': prices,
+                        'high_prices': high_prices,
+                        'low_prices': low_prices,
+                        'volatility_stats': volatility_stats
+                    }
+            else:
+                # 不应用过滤，但记录策略
+                volatility_stats.update({
+                    'filter_strategy': filter_strategy,
+                    'filtered_points': 0,
+                    'smoothing_method': 'disabled'
+                })
+                
+                return {
+                    'prices': prices,
+                    'high_prices': high_prices,
+                    'low_prices': low_prices,
+                    'volatility_stats': volatility_stats
+                }
+                
+        except Exception as e:
+            print("增强版波动率过滤失败:", str(e))
+            return None
+    
+    def _determine_enhanced_filter_strategy(self, volatility_stats):
+        """确定增强版过滤策略"""
+        filter_strength = volatility_stats['filter_strength']
+        volatility_category = volatility_stats['volatility_category']
+        
+        strategy = {
+            'apply_filter': filter_strength != 'disabled',
+            'filter_strength': filter_strength,
+            'volatility_category': volatility_category,
+            'smoothing_method': 'adaptive',
+            'outlier_threshold_multiplier': 1.0
+        }
+        
+        # 根据波动率类别调整策略
+        if volatility_category == 'low':
+            strategy['outlier_threshold_multiplier'] = 2.0
+            strategy['smoothing_method'] = 'conservative'
+        elif volatility_category == 'medium':
+            strategy['outlier_threshold_multiplier'] = 1.0
+            strategy['smoothing_method'] = 'standard'
+        else:  # high
+            strategy['apply_filter'] = False
+            strategy['smoothing_method'] = 'disabled'
+        
+        return strategy
+    
+    def _apply_intelligent_smoothing_enhanced(self, prices, high_prices, low_prices, outlier_indices, volatility_stats, filter_strategy):
+        """增强版智能平滑处理"""
+        smoothed_prices = prices.copy()
+        smoothed_highs = high_prices.copy()
+        smoothed_lows = low_prices.copy()
+        
+        method = filter_strategy['smoothing_method']
+        
+        if method == 'disabled':
+            return {
+                'prices': smoothed_prices,
+                'high_prices': smoothed_highs,
+                'low_prices': smoothed_lows,
+                'method': method
+            }
+        
+        # 对异常点进行平滑处理
+        for idx in outlier_indices:
+            if 0 < idx < len(prices) - 1:
+                if method == 'conservative':
+                    # 保守平滑：使用相邻点的加权平均
+                    weight_prev = 0.7
+                    weight_next = 0.3
+                    smoothed_prices[idx] = weight_prev * prices[idx-1] + weight_next * prices[idx+1]
+                    smoothed_highs[idx] = weight_prev * high_prices[idx-1] + weight_next * high_prices[idx+1]
+                    smoothed_lows[idx] = weight_prev * low_prices[idx-1] + weight_next * low_prices[idx+1]
+                else:
+                    # 标准平滑：简单平均
+                    smoothed_prices[idx] = (prices[idx-1] + prices[idx+1]) / 2
+                    smoothed_highs[idx] = (high_prices[idx-1] + high_prices[idx+1]) / 2
+                    smoothed_lows[idx] = (low_prices[idx-1] + low_prices[idx+1]) / 2
+        
+        return {
+            'prices': smoothed_prices,
+            'high_prices': smoothed_highs,
+            'low_prices': smoothed_lows,
+            'method': method
+        }
+    
+    def _validate_filtered_data_enhanced(self, smoothed_data, volatility_stats):
+        """增强版过滤数据验证"""
+        try:
+            prices = smoothed_data['prices']
+            high_prices = smoothed_data['high_prices']
+            low_prices = smoothed_data['low_prices']
+            
+            # 1. 基本完整性检查
+            if len(prices) == 0 or len(high_prices) == 0 or len(low_prices) == 0:
+                return False
+            
+            # 2. 价格逻辑检查
+            if not np.all(high_prices >= prices) or not np.all(prices >= low_prices):
+                return False
+            
+            # 3. 数值有效性检查
+            if np.any(np.isnan(prices)) or np.any(np.isinf(prices)):
+                return False
+            if np.any(np.isnan(high_prices)) or np.any(np.isinf(high_prices)):
+                return False
+            if np.any(np.isnan(low_prices)) or np.any(np.isinf(low_prices)):
+                return False
+            
+            # 4. 过滤效果检查
+            original_volatility = volatility_stats['mean_vol']
+            filtered_returns = np.diff(prices) / prices[:-1]
+            filtered_volatility = np.std(filtered_returns) * np.sqrt(252)
+            
+            # 过滤后波动率不应该增加太多
+            if filtered_volatility > original_volatility * 1.5:
+                return False
+            
+            return True
+            
+        except Exception as e:
+            print("过滤数据验证失败:", str(e))
+            return False
