@@ -3,9 +3,9 @@
 
 import os
 import argparse
-from src.core.stock_data_processor import StockDataProcessor
 from src.generators.chart_generator import FastChartGenerator
 from src.generators.html_generator import StaticHTMLGenerator
+from src.utils.common_utils import load_and_process_data
 
 def main():
     parser = argparse.ArgumentParser(description='批量生成所有股票的周K线图和index.html')
@@ -22,16 +22,9 @@ def main():
     os.makedirs(kline_img_dir, exist_ok=True)
 
     # 处理数据
-    data_processor = StockDataProcessor(csv_file_path)
-    if not data_processor.load_data():
-        print('数据加载失败:', csv_file_path)
+    stock_data = load_and_process_data(csv_file_path, args.max)
+    if not stock_data:
         return
-    if not data_processor.process_weekly_data():
-        print('数据处理失败')
-        return
-    stock_data = data_processor.get_all_data()
-    if args.max:
-        stock_data = dict(list(stock_data.items())[:args.max])
 
     # 批量生成K线图
     chart_gen = FastChartGenerator(output_dir=kline_img_dir)

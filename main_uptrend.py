@@ -3,47 +3,16 @@
 
 import os
 import argparse
-import shutil
 import re
-from src.core.stock_data_processor import StockDataProcessor
 from src.analyzers.uptrend_channel_analyzer import UptrendChannelAnalyzer
 from src.generators.uptrend_chart_generator import UptrendChartGenerator
 from src.generators.uptrend_html_generator import UptrendHTMLGenerator
+from src.utils.common_utils import (
+    setup_output_directories, clear_cache_if_needed, 
+    load_and_process_data, generate_similarity_chart
+)
 import numpy as np
 from scipy import stats
-
-def setup_output_directories(output_dir):
-    """创建输出目录"""
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(os.path.join(output_dir, 'images'), exist_ok=True)
-
-def clear_cache_if_needed(clear_cache):
-    """清除缓存"""
-    if clear_cache:
-        cache_dir = "cache"
-        if os.path.exists(cache_dir):
-            shutil.rmtree(cache_dir)
-            print("缓存已清除")
-
-def load_and_process_data(csv_file_path, max_stocks=None):
-    """加载和处理股票数据"""
-    data_processor = StockDataProcessor(csv_file_path)
-    
-    if not data_processor.load_data():
-        print('数据加载失败:', csv_file_path)
-        return None
-        
-    if not data_processor.process_weekly_data():
-        print('数据处理失败')
-        return None
-        
-    stock_data = data_processor.get_all_data()
-    
-    # 限制处理的股票数量
-    if max_stocks:
-        stock_data = dict(list(stock_data.items())[:max_stocks])
-    
-    return stock_data
 
 def extract_arc_stocks_from_html(arc_html_path):
     """从大弧底分析HTML中提取股票代码"""
@@ -575,94 +544,7 @@ def generate_uptrend_chart_for_arc(chart_generator, code, df, channel_result):
         print("生成大弧底上升通道图表失败 {}: {}".format(code, str(e)))
         return None
 
-def generate_similarity_chart(chart_generator, code, df, similarity_result):
-    """为相似度分析生成图表"""
-    try:
-        # 创建一个简化的channel_result用于图表生成
-        prices = df['close'].values
-        
-        # 计算基本统计信息
-        start_idx = 0
-        end_idx = len(prices) - 1
-        
-        # 计算R²拟合度
-        x = np.arange(len(prices))
-        try:
-            # 确保prices是numpy数组且为float类型
-            prices_array = np.array(prices, dtype=np.float64)
-            
-            # 尝试线性拟合（上升通道通常是线性的）
-            coeffs = np.polyfit(x, prices_array, 1)
-            y_fit = np.polyval(coeffs, x)
-            
-            # 计算R²
-            ss_res = np.sum((prices_array - y_fit) ** 2)
-            ss_tot = np.sum((prices_array - np.mean(prices_array)) ** 2)
-            
-            if ss_tot > 0:
-                r2 = 1 - (ss_res / ss_tot)
-                r2 = float(max(0, min(1, r2)))  # 确保R²在合理范围内且为float类型
-            else:
-                r2 = 0.0
-                
-        except Exception as e:
-            print(f"拟合计算失败 {code}: {e}")
-            coeffs = [0, np.mean(prices)]
-            r2 = 0.0
-        
-        # 使用相似度分析的结果创建图表数据
-        mock_channel_result = {
-            'type': 'similarity_analysis',
-            'similarity_score': similarity_result['similarity_score'],
-            'recommendation': similarity_result['recommendation'],
-            'coeffs': coeffs,
-            'r2': r2,
-            'start': start_idx,
-            'end': end_idx,
-            'total_points': len(prices),
-            'quality_score': similarity_result['similarity_score'],
-            'enhanced_quality_score': similarity_result['similarity_score'],
-            'factors': similarity_result['factors'],
-            'details': similarity_result['details'],
-            # 添加基本的价格信息
-            'price_range': {
-                'start': prices[0],
-                'end': prices[-1],
-                'min': np.min(prices),
-                'max': np.max(prices)
-            },
-            # 添加虚拟的通道线数据，避免图表生成错误
-            'upper_channel': {
-                'slope': coeffs[0],
-                'intercept': coeffs[1] + np.std(prices) * 0.5,
-                'start_idx': start_idx,
-                'end_idx': end_idx
-            },
-            'lower_channel': {
-                'slope': coeffs[0],
-                'intercept': coeffs[1] - np.std(prices) * 0.5,
-                'start_idx': start_idx,
-                'end_idx': end_idx
-            },
-            # 添加虚拟的通道质量数据
-            'channel_quality': {
-                'duration': len(prices),
-                'channel_width_pct': np.std(prices) / np.mean(prices) * 100 if np.mean(prices) > 0 else 0
-            },
-            # 添加虚拟的通道特征数据
-            'channel_features': {
-                'channel_strength': r2,
-                'breakout_attempts': 0
-            }
-        }
-        
-        # 生成图表
-        image_path = chart_generator.generate_uptrend_chart(code, df, mock_channel_result)
-        return image_path
-        
-    except Exception as e:
-        print(f"生成相似度图表失败 {code}: {e}")
-        return None
+
 
 def main():
     parser = argparse.ArgumentParser(description='针对大弧底股票进行上升通道分析')

@@ -3,45 +3,15 @@
 
 import os
 import argparse
-import shutil
-from src.core.stock_data_processor import StockDataProcessor
 from src.analyzers.pattern_analyzer import PatternAnalyzer
 from src.generators.arc_chart_generator import ArcChartGenerator
 from src.generators.arc_html_generator import ArcHTMLGenerator
 import numpy as np
-
-def setup_output_directories(output_dir):
-    """创建输出目录"""
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(os.path.join(output_dir, 'images'), exist_ok=True)
-
-def clear_cache_if_needed(clear_cache):
-    """清除缓存"""
-    if clear_cache:
-        cache_dir = "cache"
-        if os.path.exists(cache_dir):
-            shutil.rmtree(cache_dir)
-            print("缓存已清除")
-
-def load_and_process_data(csv_file_path, max_stocks=None):
-    """加载和处理股票数据"""
-    data_processor = StockDataProcessor(csv_file_path)
-    
-    if not data_processor.load_data():
-        print('数据加载失败:', csv_file_path)
-        return None
-        
-    if not data_processor.process_weekly_data():
-        print('数据处理失败')
-        return None
-        
-    stock_data = data_processor.get_all_data()
-    
-    # 限制处理的股票数量
-    if max_stocks:
-        stock_data = dict(list(stock_data.items())[:max_stocks])
-    
-    return stock_data
+from src.utils.common_utils import (
+    setup_output_directories, clear_cache_if_needed, 
+    load_and_process_data, save_json_with_numpy_support,
+    generate_similarity_chart, create_mock_arc_result
+)
 
 def detect_and_generate_charts(stock_data, output_dir):
     """Detect major arc bottom patterns and generate charts, return TOP100 if no perfect matches"""
@@ -124,7 +94,10 @@ def detect_and_generate_charts(stock_data, output_dir):
                                key=lambda x: x[1]['similarity_score'], 
                                reverse=True)
         top_100 = dict(sorted_results[:200])
-        
+
+        # 保存json文件中的股票代码
+        save_json_with_numpy_support(list(top_100.keys()), os.path.join(output_dir, 'top_100.json'))
+
         # 为TOP100生成图表
         top_100_with_charts = {}
         top_100_chart_paths = {}
@@ -133,12 +106,7 @@ def detect_and_generate_charts(stock_data, output_dir):
             key = f'similar_{code}'
             
             # 创建兼容的arc_result结构用于图表生成
-            mock_arc_result = {
-                'type': 'similarity_based',
-                'similarity_score': result['similarity_score'],
-                'recommendation': result['similarity_result']['recommendation'],
-                'factors': result['similarity_result']['factors']
-            }
+            mock_arc_result = create_mock_arc_result(result['similarity_result'], result['prices'])
             
             top_100_with_charts[key] = {
                 'arc_result': mock_arc_result,
@@ -166,82 +134,7 @@ def detect_and_generate_charts(stock_data, output_dir):
     print("未发现任何符合条件或具有相似性的大弧底形态")
     return {}, {}
 
-def generate_similarity_chart(chart_generator, code, df, similarity_result):
-    """为相似度分析生成图表"""
-    try:
-        # 创建一个简化的arc_result用于图表生成
-        prices = df['close'].values
-        
-        # 计算基本统计信息
-        start_idx = 0
-        end_idx = len(prices) - 1
-        
-        # 计算R²拟合度
-        x = np.arange(len(prices))
-        try:
-            # 确保prices是numpy数组且为float类型
-            prices_array = np.array(prices, dtype=np.float64)
-            
-            # 尝试二次拟合
-            coeffs = np.polyfit(x, prices_array, 2)
-            y_fit = np.polyval(coeffs, x)
-            
-            # 计算R²
-            ss_res = np.sum((prices_array - y_fit) ** 2)
-            ss_tot = np.sum((prices_array - np.mean(prices_array)) ** 2)
-            
-            if ss_tot > 0:
-                r2 = 1 - (ss_res / ss_tot)
-                r2 = float(max(0, min(1, r2)))  # 确保R²在合理范围内且为float类型
-            else:
-                r2 = 0.0
-                
-            # 如果二次拟合效果不好，尝试线性拟合
-            if r2 < 0.1:
-                coeffs_linear = np.polyfit(x, prices_array, 1)
-                y_fit_linear = np.polyval(coeffs_linear, x)
-                ss_res_linear = np.sum((prices_array - y_fit_linear) ** 2)
-                
-                if ss_tot > 0:
-                    r2_linear = 1 - (ss_res_linear / ss_tot)
-                    if r2_linear > r2:
-                        r2 = float(max(0, min(1, r2_linear)))
-                        coeffs = np.append(coeffs_linear, 0)  # 转换为二次形式
-                        
-        except Exception as e:
-            print(f"拟合计算失败 {code}: {e}")
-            coeffs = [0, 0, np.mean(prices)]
-            r2 = 0.0
-        
-        # 使用相似度分析的结果创建图表数据
-        mock_arc_result = {
-            'type': 'similarity_analysis',
-            'similarity_score': similarity_result['similarity_score'],
-            'recommendation': similarity_result['recommendation'],
-            'coeffs': coeffs,
-            'r2': r2,
-            'start': start_idx,
-            'end': end_idx,
-            'total_points': len(prices),
-            'quality_score': similarity_result['similarity_score'],
-            'factors': similarity_result['factors'],
-            'details': similarity_result['details'],
-            # 添加基本的价格信息
-            'price_range': {
-                'start': prices[0],
-                'end': prices[-1],
-                'min': np.min(prices),
-                'max': np.max(prices)
-            }
-        }
-        
-        # 生成图表
-        image_path = chart_generator.generate_major_arc_chart(code, df, mock_arc_result)
-        return image_path
-        
-    except Exception as e:
-        print(f"生成相似度图表失败 {code}: {e}")
-        return None
+
 
 def main():
     parser = argparse.ArgumentParser(description='批量检测圆弧底并生成分析图和HTML报告')
