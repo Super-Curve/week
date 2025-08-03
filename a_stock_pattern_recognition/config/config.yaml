@@ -1,0 +1,56 @@
+# A股形态识别系统配置文件
+
+# 数据源配置
+data_source:
+  provider: "tushare"  # tushare, akshare, local
+  tushare_token: "your_token_here"
+  start_date: "2020-01-01"
+  end_date: "2024-01-01"
+  
+# 数据库配置
+database:
+  type: "sqlite"  # sqlite, mysql
+  sqlite_path: "data/stock_data.db"
+  mysql:
+    host: "localhost"
+    port: 3306
+    user: "root"
+    password: ""
+    database: "stock_pattern"
+
+# 波动率参数
+volatility:
+  atr_period: 14
+  hv_period: 20
+  bb_period: 20
+  bb_std: 2
+  filter_factor: 1.5  # 波动率过滤倍数
+  
+# 形态识别参数
+pattern_recognition:
+  lookback_window: 50  # 回看窗口
+  min_swing_points: 3  # 最少摆动点数
+  time_confirm: 3  # 时间确认周期
+  volume_factor: 1.2  # 成交量放大倍数
+  
+# 交易参数
+trading:
+  max_position_pct: 0.2  # 单只股票最大仓位
+  stop_loss_pct: 0.02  # 固定止损百分比
+  atr_stop_factor: 2  # ATR止损倍数
+  profit_target_factor: 3  # 盈亏比
+  max_holding_days: 20  # 最大持仓天数
+  
+# 回测参数
+backtest:
+  initial_capital: 1000000  # 初始资金
+  commission: 0.0003  # 手续费率
+  stamp_duty: 0.001  # 印花税
+  slippage: 0.0002  # 滑点
+  
+# 日志配置
+logging:
+  level: "INFO"
+  log_path: "logs/"
+  max_file_size: "10MB"
+  backup_count: 5

@@ -1,0 +1,32 @@
+# 数据处理
+pandas==2.0.3
+numpy==1.24.3
+scipy==1.10.1
+
+# 数据获取
+tushare==1.4.0
+akshare==1.10.85
+yfinance==0.2.28
+
+# 技术指标
+TA-Lib==0.4.28
+pandas-ta==0.3.14b0
+
+# 可视化
+matplotlib==3.7.2
+plotly==5.16.1
+mplfinance==0.12.10b0
+
+# 数据库
+sqlalchemy==2.0.20
+pymysql==1.1.0
+redis==5.0.0
+
+# 回测框架
+backtrader==1.9.78.123
+pyfolio==0.9.2
+
+# 工具库
+pyyaml==6.0.1
+loguru==0.7.0
+python-dotenv==1.0.0
