@@ -63,6 +63,9 @@ brew install ta-lib && pip install TA-Lib
 
 # 相似度分析
 ./run_in_stock_env.sh similarity --target 000001.SZ --top 10
+
+# 高低点分析
+./run_in_stock_env.sh pivot --method statistical_significance --sensitivity conservative
 ```
 
 ### 常用参数

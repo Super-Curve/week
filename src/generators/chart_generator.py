@@ -31,13 +31,16 @@ class FastChartGenerator(BaseChartGenerator):
             if len(normalized_data['dates']) < 2:
                 return code, None
             
-            # 绘制坐标轴和网格
-            self.draw_axes_and_grid(draw, normalized_data)
+            # 设置数据点数量（供网格线使用）
+            self._dates_count = len(data)
             
-            # 绘制周K线图
-            self.draw_candlestick_chart(draw, normalized_data)
+            # 使用统一的Wind风格K线绘制方法
+            self.draw_wind_candlestick_chart(draw, normalized_data, style='simple')
             
-            # 添加股票代码和价格信息
+            # 使用统一的坐标轴和标签绘制方法
+            self.draw_wind_axes_and_labels(draw, normalized_data, code, style='simple')
+            
+            # 添加股票代码和价格信息（保持原有样式）
             self.add_chart_labels(draw, code, normalized_data['price_info'])
             
             # 保存图片
@@ -51,102 +54,20 @@ class FastChartGenerator(BaseChartGenerator):
             return code, None
     
     def draw_candlestick_chart(self, draw, normalized_data):
-        """绘制K线图"""
-        dates = normalized_data['dates']
-        opens = normalized_data['open']
-        highs = normalized_data['high']
-        lows = normalized_data['low']
-        closes = normalized_data['close']
-        
-        # 定义图表区域边界
-        chart_left = 60
-        chart_right = self.width - 10
-        chart_top = 40
-        chart_bottom = self.height - 30
-        
-        # K线宽度
-        candle_width = 3
-        
-        for i in range(len(dates)):
-            x = dates[i]
-            open_y = opens[i]
-            high_y = highs[i]
-            low_y = lows[i]
-            close_y = closes[i]
-            
-            # 确保坐标在图表区域内
-            if not (chart_left <= x <= chart_right):
-                continue
-            
-            # 绘制影线（最高价到最低价）
-            draw.line([(x, high_y), (x, low_y)], fill='black', width=1)
-            
-            # 绘制实体（开盘价到收盘价）
-            if close_y >= open_y:
-                # 阳线（收盘价高于开盘价）
-                color = 'red'
-                body_top = open_y
-                body_bottom = close_y
-            else:
-                # 阴线（收盘价低于开盘价）
-                color = 'green'
-                body_top = close_y
-                body_bottom = open_y
-            
-            # 绘制K线实体
-            if abs(body_bottom - body_top) > 1:  # 只有当实体有高度时才绘制
-                draw.rectangle([
-                    (x - candle_width//2, body_top),
-                    (x + candle_width//2, body_bottom)
-                ], fill=color, outline=color)
-            else:
-                # 十字星（开盘价等于收盘价）
-                draw.line([(x - candle_width//2, body_top), (x + candle_width//2, body_top)], fill='black', width=1)
+        """
+        绘制K线图 - 已重构为使用统一的Wind风格方法
+        保留此方法为向后兼容
+        """
+        # 使用统一的方法，但保持简单风格
+        self.draw_wind_candlestick_chart(draw, normalized_data, style='simple')
     
     def draw_axes_and_grid(self, draw, normalized_data):
-        """绘制坐标轴和网格"""
-        # 定义图表区域边界
-        chart_left = 60
-        chart_right = self.width - 10
-        chart_top = 40
-        chart_bottom = self.height - 30
-        
-        # 绘制坐标轴
-        draw.line([(chart_left, chart_top), (chart_left, chart_bottom)], fill='black', width=2)  # Y轴
-        draw.line([(chart_left, chart_bottom), (chart_right, chart_bottom)], fill='black', width=2)  # X轴
-        
-        # 绘制价格标签
-        price_info = normalized_data['price_info']
-        price_range = price_info['display_max'] - price_info['display_min']
-        
-        # 计算价格标签位置
-        num_price_labels = 5
-        for i in range(num_price_labels + 1):
-            price = price_info['display_min'] + (price_range * i / num_price_labels)
-            y = self.normalize_price_for_display(price, price_info)
-            
-            # 绘制水平网格线
-            if i > 0 and i < num_price_labels:
-                draw.line([(chart_left, y), (chart_right, y)], fill='lightgray', width=1)
-            
-            # 绘制价格标签
-            if chart_top <= y <= chart_bottom:
-                price_text = f"{price:.2f}"
-                font, _ = self.get_fonts(8, 8)
-                text_bbox = draw.textbbox((0, 0), price_text, font=font)
-                text_width = text_bbox[2] - text_bbox[0]
-                draw.text((chart_left - text_width - 5, y - 5), price_text, fill='black', font=font)
-        
-        # 绘制日期标签
-        date_info = normalized_data['date_info']
-        for idx, label in date_info['date_labels']:
-            if 0 <= idx < len(normalized_data['dates']):
-                x = normalized_data['dates'][idx]
-                if chart_left <= x <= chart_right:
-                    font, _ = self.get_fonts(8, 8)
-                    text_bbox = draw.textbbox((0, 0), label, font=font)
-                    text_width = text_bbox[2] - text_bbox[0]
-                    draw.text((x - text_width//2, chart_bottom + 5), label, fill='black', font=font)
+        """
+        绘制坐标轴和网格 - 已重构为使用统一的Wind风格方法  
+        保留此方法为向后兼容
+        """
+        # 使用统一的方法，但保持简单风格
+        self.draw_wind_axes_and_labels(draw, normalized_data, style='simple')
     
     def add_chart_labels(self, draw, code, price_info):
         """添加股票代码和价格信息"""

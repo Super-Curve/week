@@ -55,3 +55,8 @@ venv.bak/
 *.temp
 cache/cache_info.txt
 cache/weekly_data.pkl
+test_output/TEST001.png
+test_output/advanced_pivot/000001.SZ_pivot.png
+test_output/advanced_pivot/000002.SZ_pivot.png
+test_output/advanced_pivot/000004.SZ_pivot.png
+test_output/segmented_pivot/603959.SH_pivot.png
