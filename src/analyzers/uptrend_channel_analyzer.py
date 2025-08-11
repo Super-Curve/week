@@ -14,7 +14,26 @@ except ImportError:
     print("Warning: TA-Lib not available. Using basic implementation.")
 
 class UptrendChannelAnalyzer:
-    """专业上升通道分析器 - 量化架构师优化版"""
+    """
+    专业上升通道分析器
+
+    用途:
+    - 识别近段时间的上升通道（平行通道），输出通道线、质量评分与推荐。
+
+    实现方式:
+    - 关键点识别 → 约束优化拟合平行通道（SLSQP）→ 质量验证（时长/宽度/平行性/内分布）
+    - 可选 TA-Lib 增强与智能波动率过滤
+
+    优点:
+    - 结构化输出、可解释；与图表/HTML 配合良好
+
+    局限:
+    - 对关键点选择与异常波动较敏感；极端行情需谨慎
+
+    维护建议:
+    - 优先在 _fit_parallel_channels_optimized/_validate_professional_channel_quality 中调参
+    - 保持返回结构字段稳定（upper_channel/lower_channel/channel_quality/...）
+    """
     
     def __init__(self):
         self.talib_available = TALIB_AVAILABLE

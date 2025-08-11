@@ -9,7 +9,24 @@ import pandas as pd
 from src.analyzers.volatility_analyzer import VolatilityAnalyzer
 
 class VolatilityHTMLGenerator:
-    """波动率分析HTML生成器"""
+    """
+    波动率 HTML 生成器
+
+    用途:
+    - 批量计算/展示波动率与波幅指标，生成可分页浏览的 HTML 报告。
+
+    实现方式:
+    - 依赖 VolatilityAnalyzer 产出各类波动率序列与统计；渲染网格化图表与统计卡片
+
+    优点:
+    - 覆盖多种常见波动率估计器；报告结构化
+
+    局限:
+    - 页面较长；样式内嵌，跨项目复用度有限
+
+    维护建议:
+    - 保持 analysis_results/chart_paths 的约定键；新指标统一在 _generate_main_html 中扩展
+    """
     
     def __init__(self, output_dir="output/volatility"):
         self.output_dir = output_dir

@@ -11,9 +11,27 @@ from datetime import datetime
 
 
 class PivotHTMLGenerator:
-    """高低点HTML生成器"""
+    """
+    高低点 HTML 报告生成器
+
+    用途:
+    - 将各股票的枢轴图、分析指标、入选依据（prominence/confirm/ZL/ZR）汇总为可浏览的 HTML。
+
+    实现方式:
+    - 先按 ARC 列表排序，剩余按准确度排序；分页渲染
+    - 读取 pivot_result 的 pivot_meta 并预览前若干个点的指标；内嵌 CSS/JS
+
+    优点:
+    - 结构清晰、易分发；无需服务端即可查看
+
+    局限:
+    - 大量股票时页面较大；样式集中在字符串内，复用度有限
+
+    维护建议:
+    - 尽量保持 HTML 字段兼容；新增指标请在 _generate_detailed_analysis_summary 中集中处理
+    """
     
-    def __init__(self, output_dir="pivot_output"):
+    def __init__(self, output_dir="output/pivot"):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         
@@ -164,6 +182,11 @@ class PivotHTMLGenerator:
         analysis_desc = pivot_result.get('analysis_description', {})
         volatility_metrics = pivot_result.get('volatility_metrics', {})
         filter_effectiveness = pivot_result.get('filter_effectiveness', {})
+
+        # 新增：统计显著性元信息（用于展示枢轴“为什么入选”）
+        meta = pivot_result.get('pivot_meta', {}) or {}
+        pivot_meta_highs = meta.get('pivot_meta_highs', {})
+        pivot_meta_lows = meta.get('pivot_meta_lows', {})
         
         # 质量等级
         quality_class, quality_text = self._get_quality_class(accuracy_score)
@@ -229,6 +252,11 @@ class PivotHTMLGenerator:
         volatility_metrics = pivot_result.get('volatility_metrics', {})
         filter_effectiveness = pivot_result.get('filter_effectiveness', {})
         accuracy_score = pivot_result.get('accuracy_score', 0)
+
+        # 读取统计显著性元信息（避免未定义变量）
+        meta = pivot_result.get('pivot_meta', {}) or {}
+        pivot_meta_highs = meta.get('pivot_meta_highs', {})
+        pivot_meta_lows = meta.get('pivot_meta_lows', {})
         
         # 高低点统计
         filtered_highs = len(pivot_result.get('filtered_pivot_highs', []))
@@ -295,6 +323,16 @@ class PivotHTMLGenerator:
                 <div class="metric-row">
                     <span class="metric-label">过滤率:</span>
                     <span class="metric-value">{filter_effectiveness.get('filter_ratio', 0):.1%}</span>
+                </div>
+            </div>
+
+            <div class="metric-group">
+                <h4>🧠 枢轴入选依据</h4>
+                <div class="analysis-text">
+                    <div><strong>高点</strong>（最多显示前5个）：</div>
+                    {self._format_pivot_meta_preview(pivot_meta_highs, is_high=True)}
+                    <div style="margin-top:8px;"><strong>低点</strong>（最多显示前5个）：</div>
+                    {self._format_pivot_meta_preview(pivot_meta_lows, is_high=False)}
                 </div>
             </div>
             
@@ -1085,3 +1123,21 @@ class PivotHTMLGenerator:
             }
         }
         '''
+
+    def _format_pivot_meta_preview(self, pivot_meta: dict, is_high: bool) -> str:
+        if not pivot_meta:
+            return '<div class="metric-text">无</div>'
+        # 选取最多5个点，按索引排序
+        items = []
+        for idx in sorted(pivot_meta.keys())[:5]:
+            m = pivot_meta.get(idx, {})
+            prom = m.get('prominence', 0.0)
+            cmove = m.get('confirm_move', 0.0)
+            z_l = m.get('z_left', 0.0)
+            z_r = m.get('z_right', 0.0)
+            lab = '高点' if is_high else '低点'
+            items.append(
+                f'<div class="metric-row"><span class="metric-label">#{idx} {lab}:</span>'
+                f'<span class="metric-value">prom={prom:.3f} | confirm={cmove:.3f} | ZL={z_l:.2f} | ZR={z_r:.2f}</span></div>'
+            )
+        return "".join(items)

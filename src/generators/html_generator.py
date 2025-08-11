@@ -5,26 +5,47 @@ from src.generators.chart_generator import FastChartGenerator
 from datetime import datetime
 
 class StaticHTMLGenerator:
-    def __init__(self, csv_file_path, output_dir="output"):
-        self.csv_file_path = csv_file_path
+    """
+    静态 K 线 HTML 生成器
+
+    用途:
+    - 批量生成周K线静态图库，便于快速巡检数据质量或做人工筛选。
+
+    实现方式:
+    - 仅使用数据库数据源；通过 FastChartGenerator 批量生成图片，再拼装简单分页 HTML
+
+    优点:
+    - 依赖少、上手快；与主分析流程解耦
+
+    局限:
+    - 不含高级指标与交互；图片较多时页面较重
+
+    维护建议:
+    - 按需扩展分页/筛选；保持与数据库处理器的解耦
+    """
+    def __init__(self, output_dir="output"):
         self.output_dir = output_dir
         self.stock_processor = None
         self.chart_generator = None
         
     def process_data(self):
-        """处理数据并生成图表"""
+        """处理数据并生成图表 - 使用数据库数据源"""
         print("开始处理数据...")
         
-        # 初始化数据处理器
-        self.stock_processor = StockDataProcessor(self.csv_file_path)
+        # 初始化数据处理器 - 使用数据库
+        from src.core.stock_data_processor import create_stock_data_processor
+        self.stock_processor = create_stock_data_processor(use_database=True)
         
         # 加载和处理数据
         if not self.stock_processor.load_data():
-            print("数据加载失败")
+            print("数据库连接失败")
             return False
         
         if not self.stock_processor.process_weekly_data():
             print("数据处理失败")
+            # 关闭数据库连接
+            if hasattr(self.stock_processor, 'close_connection'):
+                self.stock_processor.close_connection()
             return False
         
         # 初始化图表生成器
@@ -38,27 +59,33 @@ class StaticHTMLGenerator:
         if not self.process_data():
             return False
         
-        # 创建输出目录
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # 获取所有股票数据
-        all_data = self.stock_processor.get_all_data()
-        stock_codes = list(all_data.keys())
-        
-        if max_charts:
-            stock_codes = stock_codes[:max_charts]
-            print(f"开始生成 {len(stock_codes)} 只股票的图片（限制数量）...")
-        else:
-            print(f"开始生成 {len(stock_codes)} 只股票的图片...")
-        
-        # 生成所有图片
-        all_images = self.chart_generator.generate_charts_batch(all_data, max_charts)
-        
-        # 生成HTML文件
-        self._generate_main_html(all_images, stock_codes)
-        
-        print(f"静态HTML文件已生成到 {self.output_dir} 目录")
-        return True
+        try:
+            # 创建输出目录
+            os.makedirs(self.output_dir, exist_ok=True)
+            
+            # 获取所有股票数据
+            all_data = self.stock_processor.get_all_data()
+            stock_codes = list(all_data.keys())
+            
+            if max_charts:
+                stock_codes = stock_codes[:max_charts]
+                print(f"开始生成 {len(stock_codes)} 只股票的图片（限制数量）...")
+            else:
+                print(f"开始生成 {len(stock_codes)} 只股票的图片...")
+            
+            # 生成所有图片
+            all_images = self.chart_generator.generate_charts_batch(all_data, max_charts)
+            
+            # 生成HTML文件
+            self._generate_main_html(all_images, stock_codes)
+            
+            print(f"静态HTML文件已生成到 {self.output_dir} 目录")
+            return True
+            
+        finally:
+            # 关闭数据库连接
+            if hasattr(self.stock_processor, 'close_connection'):
+                self.stock_processor.close_connection()
     
     def generate_html_only(self, stock_data, max_charts=None):
         """只生成HTML文件，不生成图片（假设图片已存在）"""
@@ -281,7 +308,7 @@ class StaticHTMLGenerator:
         
         <div class="info">
             <p><strong>生成时间:</strong> ''' + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + '''</p>
-            <p><strong>数据来源:</strong> ''' + self.csv_file_path + '''</p>
+            <p><strong>数据来源:</strong> 数据库</p>
         </div>
 '''
     

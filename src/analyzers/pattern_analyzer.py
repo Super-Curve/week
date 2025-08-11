@@ -10,6 +10,26 @@ except ImportError:
     print("Warning: TA-Lib not available. Using basic implementation.")
 
 class PatternAnalyzer:
+    """
+    圆弧底/相似度形态分析器
+
+    用途:
+    - 识别战略大弧底与相似度评分，输出阶段、低位区、箱体与趋势等结构化指标。
+
+    实现方式:
+    - 基础版使用二次多项式拟合与三阶段划分；增强版可选 TA-Lib 指标作为评分因子
+    - 提供 flexible 评分路径用于“相似但不完全满足”的情形
+
+    优点:
+    - 输出丰富、可视化友好；提供多种细分因子便于解释
+
+    局限:
+    - 参数依赖较强；不同标的/周期需回测微调
+
+    维护建议:
+    - 统一在 _calculate_strategic_arc_quality 与 *_flexible 路径集中管理权重
+    - 对外字段名尽量稳定（stages/low_zone_analysis/box_analysis/...）
+    """
     def __init__(self):
         self.talib_available = TALIB_AVAILABLE
     

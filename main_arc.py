@@ -138,7 +138,6 @@ def detect_and_generate_charts(stock_data, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='批量检测圆弧底并生成分析图和HTML报告')
-    parser.add_argument('--csv', type=str, default='/Users/kangfei/Downloads/result.csv', help='CSV数据文件路径')
     parser.add_argument('--output', type=str, default='output/arc', help='输出目录')
     parser.add_argument('--max', type=int, default=None, help='最多处理多少只股票（调试用）')
     parser.add_argument('--clear-cache', action='store_true', help='清除缓存，重新处理数据')
@@ -150,8 +149,9 @@ def main():
     # 清除缓存
     clear_cache_if_needed(args.clear_cache)
     
-    # 加载和处理数据
-    stock_data = load_and_process_data(args.csv, args.max)
+    # 加载和处理数据 - 使用数据库数据源
+    # 这里需要全量扫描大弧底，所以对ARC主流程禁用arc-top限制
+    stock_data = load_and_process_data(max_stocks=args.max, use_arc_top=False)
     if not stock_data:
         return
     
@@ -167,6 +167,13 @@ def main():
     # 生成HTML报告
     html_generator = ArcHTMLGenerator(output_dir=args.output)
     html_generator.generate_arc_html(results, chart_paths)
+    # 额外输出一份股票代码列表，供下游日频/周频分析选择集使用
+    try:
+        from src.utils.common_utils import save_json_with_numpy_support
+        arc_codes = [k.split('_', 1)[1] if '_' in k else k for k in results.keys()]
+        save_json_with_numpy_support(arc_codes[:200], os.path.join(args.output, 'top_100.json'))
+    except Exception as e:
+        print(f"保存 ARC 代码列表失败: {e}")
     
     print('大弧底分析图和HTML已生成，输出目录:', args.output)
 

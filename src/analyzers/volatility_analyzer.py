@@ -12,7 +12,24 @@ matplotlib.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu 
 matplotlib.rcParams['axes.unicode_minus'] = False
 
 class VolatilityAnalyzer:
-    """波动率和波幅分析器"""
+    """
+    波动率与波幅分析器
+
+    用途:
+    - 提供历史/已实现/Parkinson/Garman-Klass 等多种波动率计算，以及日内/期间波幅测度。
+
+    实现方式:
+    - 基于 pandas 滚动窗口与闭式近似公式计算；统一年化到周频52
+
+    优点:
+    - 指标覆盖充分；与 HTML/图表接口解耦
+
+    局限:
+    - 依赖数据质量（高低价异常会放大噪声）；不做缺失自动修复
+
+    维护建议:
+    - 新增估计器请保持函数签名一致；统一在 analyze_stock_volatility 中汇总输出
+    """
     
     def __init__(self):
         self.risk_free_rate = 0.03  # 无风险利率，默认3%

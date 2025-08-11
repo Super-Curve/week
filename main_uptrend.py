@@ -3,57 +3,18 @@
 
 import os
 import argparse
-import re
 from src.analyzers.uptrend_channel_analyzer import UptrendChannelAnalyzer
 from src.generators.uptrend_chart_generator import UptrendChartGenerator
 from src.generators.uptrend_html_generator import UptrendHTMLGenerator
 from src.utils.common_utils import (
     setup_output_directories, clear_cache_if_needed, 
-    load_and_process_data, generate_similarity_chart
+    load_and_process_data, generate_similarity_chart,
+    load_arc_stock_codes, filter_stock_data_by_codes
 )
 import numpy as np
 from scipy import stats
 
-def extract_arc_stocks_from_html(arc_html_path):
-    """从大弧底分析HTML中提取股票代码"""
-    arc_stocks = []
-    
-    try:
-        with open(arc_html_path, 'r', encoding='utf-8') as f:
-            html_content = f.read()
-        
-        # 使用正则表达式提取股票代码
-        # 匹配模式：similar_XXXXXX.XX 或 major_XXXXXX.XX
-        pattern = r'(?:similar_|major_)([A-Z0-9]{6}\.[A-Z]{2})'
-        matches = re.findall(pattern, html_content)
-        
-        # 去重并返回
-        arc_stocks = list(set(matches))
-        print("从大弧底分析中提取到 {} 只股票: {}".format(len(arc_stocks), arc_stocks))
-        
-    except Exception as e:
-        print(f"读取大弧底分析HTML失败: {e}")
-    
-    return arc_stocks
-
-def filter_stock_data_by_arc(stock_data, arc_stocks):
-    """根据大弧底股票列表过滤股票数据"""
-    if not arc_stocks:
-        print("没有大弧底股票数据，返回原始数据")
-        return stock_data
-    
-    filtered_data = {}
-    found_count = 0
-    
-    for code in arc_stocks:
-        if code in stock_data:
-            filtered_data[code] = stock_data[code]
-            found_count += 1
-        else:
-            print(f"警告: 股票 {code} 在大弧底分析中找到，但在数据中不存在")
-    
-    print(f"成功过滤出 {found_count}/{len(arc_stocks)} 只大弧底股票")
-    return filtered_data
+# 复用通用工具的加载与过滤逻辑，移除本文件内重复实现
 
 def detect_and_generate_charts(stock_data, output_dir):
     """检测上升通道并生成图表，针对大弧底股票进行优化分析"""
@@ -548,9 +509,8 @@ def generate_uptrend_chart_for_arc(chart_generator, code, df, channel_result):
 
 def main():
     parser = argparse.ArgumentParser(description='针对大弧底股票进行上升通道分析')
-    parser.add_argument('--csv', type=str, default='/Users/kangfei/Downloads/result.csv', help='CSV数据文件路径')
     parser.add_argument('--output', type=str, default='output/uptrend', help='输出目录')
-    parser.add_argument('--arc-html', type=str, default='output/arc/arc_analysis.html', help='大弧底分析HTML文件路径')
+    parser.add_argument('--arc-html', type=str, default='output/arc/index.html', help='大弧底分析HTML文件路径')
     parser.add_argument('--max', type=int, default=None, help='最多处理多少只股票（调试用）')
     parser.add_argument('--clear-cache', action='store_true', help='清除缓存，重新处理数据')
     args = parser.parse_args()
@@ -561,16 +521,17 @@ def main():
     # 清除缓存
     clear_cache_if_needed(args.clear_cache)
     
-    # 加载和处理数据
-    stock_data = load_and_process_data(args.csv, args.max)
+    # 加载和处理数据 - 使用数据库数据源
+    # 只加载ARC列表（最多200只）的数据，加速与节省缓存
+    stock_data = load_and_process_data(max_stocks=args.max, use_arc_top=True)
     if not stock_data:
         return
     
-    # 从大弧底分析中提取股票代码
-    arc_stocks = extract_arc_stocks_from_html(args.arc_html)
+    # 从大弧底分析中提取股票代码（优先JSON回退HTML）
+    arc_stocks = load_arc_stock_codes(arc_json_path="output/arc/top_100.json", fallback_html_path=args.arc_html)
     
     # 根据大弧底股票过滤数据
-    filtered_stock_data = filter_stock_data_by_arc(stock_data, arc_stocks)
+    filtered_stock_data, _ = filter_stock_data_by_codes(stock_data, arc_stocks)
     
     if not filtered_stock_data:
         print("没有找到大弧底股票数据，使用原始数据进行上升通道分析")

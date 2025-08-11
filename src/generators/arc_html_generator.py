@@ -5,7 +5,25 @@ from src.analyzers.pattern_analyzer import PatternAnalyzer
 from src.generators.arc_chart_generator import ArcChartGenerator
 
 class ArcHTMLGenerator:
-    def __init__(self, output_dir="arc_output"):
+    """
+    圆弧底 HTML 生成器
+
+    用途:
+    - 汇总圆弧底/相似度/战略大弧底结果，生成可分页浏览的报告。
+
+    实现方式:
+    - 批量生成图表后嵌入；对不同类型结果（global/similarity/strategic）采用不同标题与信息段
+
+    优点:
+    - 一致的报告样式，便于横向对比
+
+    局限:
+    - 文本样式内嵌；当结果字段变化时需同步适配
+
+    维护建议:
+    - 集中在 _generate_arc_html/_generate_stage_details 内维护渲染逻辑
+    """
+    def __init__(self, output_dir="output/arc"):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         self.pattern_analyzer = PatternAnalyzer()
@@ -122,9 +140,9 @@ class ArcHTMLGenerator:
             html += '</div></div>'
         html += self._get_javascript(total_pages)
         html += self._get_html_footer()
-        with open(os.path.join(self.output_dir, 'arc_analysis.html'), 'w', encoding='utf-8') as f:
+        with open(os.path.join(self.output_dir, 'index.html'), 'w', encoding='utf-8') as f:
             f.write(html)
-        print(f"圆弧底分析HTML已生成: {os.path.join(self.output_dir, 'arc_analysis.html')}")
+        print(f"圆弧底分析HTML已生成: {os.path.join(self.output_dir, 'index.html')}")
     
     def _generate_arc_html(self, arc_charts, arc_patterns):
         """生成圆弧底分析的HTML文件"""
@@ -177,10 +195,10 @@ class ArcHTMLGenerator:
         html_content += self._get_html_footer()
         
         # 保存文件
-        with open(os.path.join(self.output_dir, 'arc_analysis.html'), 'w', encoding='utf-8') as f:
+        with open(os.path.join(self.output_dir, 'index.html'), 'w', encoding='utf-8') as f:
             f.write(html_content)
         
-        print(f"圆弧底分析HTML已生成: {os.path.join(self.output_dir, 'arc_analysis.html')}")
+        print(f"圆弧底分析HTML已生成: {os.path.join(self.output_dir, 'index.html')}")
     
     def _generate_stage_details(self, stages):
         """生成阶段详细信息"""

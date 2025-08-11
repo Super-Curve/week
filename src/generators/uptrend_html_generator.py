@@ -6,7 +6,24 @@ import json
 from datetime import datetime
 
 class UptrendHTMLGenerator:
-    """上升通道HTML生成器"""
+    """
+    上升通道 HTML 生成器
+
+    用途:
+    - 汇总上升通道识别结果与对应图片，按评分排序生成报告。
+
+    实现方式:
+    - 读取 results 与 chart_paths，渲染卡片式布局；包含统计摘要与基础样式
+
+    优点:
+    - 快速浏览效果最好的标的
+
+    局限:
+    - 仅展示最终图片，不含交互细节
+
+    维护建议:
+    - 保持 chart_paths 命名与路径约定一致；HTML 样式集中在本文件中
+    """
     
     def __init__(self, output_dir="output/uptrend"):
         self.output_dir = output_dir

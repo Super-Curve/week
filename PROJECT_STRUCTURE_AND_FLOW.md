@@ -88,7 +88,7 @@ week/
 ```
 
 **核心功能:**
-- CSV数据文件加载
+- 数据库读取（MySQL，实时）
 - 智能缓存机制(pickle)
 - 日K线到周K线的聚合转换
 - 数据清洗和验证
@@ -96,8 +96,8 @@ week/
 
 **关键方法:**
 ```python
-load_data()           # 加载CSV数据
-process_weekly_data() # 转换为周K线数据
+load_data()           # 连接数据库
+process_weekly_data() # 从数据库加载周K线数据
 get_all_data()        # 获取处理后的数据
 _is_cache_valid()     # 缓存有效性检查
 ```
@@ -269,7 +269,7 @@ def main():
 
 ```mermaid
 graph TD
-    A[CSV数据文件] --> B[StockDataProcessor]
+    A[MySQL数据库] --> B[StockDataProcessor]
     B --> C[缓存系统]
     B --> D[周K线数据]
     

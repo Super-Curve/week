@@ -10,14 +10,12 @@ from src.utils.common_utils import load_and_process_data
 
 def main():
     parser = argparse.ArgumentParser(description='K线图像相似度分析')
-    parser.add_argument('--csv', type=str, default='/Users/kangfei/Downloads/result.csv', help='CSV数据文件路径')
     parser.add_argument('--imgdir', type=str, default='output/kline_images', help='K线图图片目录')
     parser.add_argument('--target', type=str, required=True, help='目标股票代码')
     parser.add_argument('--top', type=int, default=10, help='返回最相似的前N只股票')
     parser.add_argument('--force-regenerate', action='store_true', help='强制重新生成所有图片')
     args = parser.parse_args()
 
-    csv_file_path = args.csv
     kline_img_dir = args.imgdir
     target_code = args.target
     top_n = args.top
@@ -35,8 +33,8 @@ def main():
     existing_images = [f for f in os.listdir(kline_img_dir) if f.endswith('.png')]
     if force_regenerate or len(existing_images) < 100:  # 如果图片数量太少，重新生成
         print('检测到图片数量不足，开始生成K线图...')
-        # 处理数据
-        stock_data = load_and_process_data(csv_file_path)
+        # 处理数据 - 使用数据库数据源
+        stock_data = load_and_process_data()
         if not stock_data:
             return
 
@@ -62,7 +60,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # 生成简单的HTML报告
-    html_path = os.path.join(output_dir, 'similarity_analysis.html')
+    html_path = os.path.join(output_dir, 'index.html')
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(f'''<!DOCTYPE html>
 <html>

@@ -4,6 +4,24 @@ import os
 from .base_chart_generator import BaseChartGenerator
 
 class ArcChartGenerator(BaseChartGenerator):
+    """
+    圆弧底图表生成器
+
+    用途:
+    - 生成传统与大弧底两类图表，叠加拟合线/阶段/最高价线等辅助标注。
+
+    实现方式:
+    - 复用简单风格绘制；根据分析结果绘制拟合曲线、阶段分段、低位区等
+
+    优点:
+    - 视觉直观，辅助研判形态质量
+
+    局限:
+    - 拟合/阶段信息准确性依赖上游分析器
+
+    维护建议:
+    - 保持 arc_result 的字段稳定；新增标注尽量参数化
+    """
     def __init__(self, output_dir="arc_images"):
         # 调用父类初始化，设置默认尺寸为400x300（与FastChartGenerator一致）
         super().__init__(output_dir=output_dir, width=400, height=300)

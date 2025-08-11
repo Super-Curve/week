@@ -6,7 +6,29 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 
 class BaseChartGenerator:
-    """基础图表生成器，包含公共的周K数据处理方法"""
+    """
+    基础图表生成器
+
+    用途:
+    - 负责坐标标准化、Wind 风格绘制、坐标轴/网格/字体等通用能力，为各业务图表复用。
+
+    实现方式:
+    - normalize_data 将 OHLC 映射到像素坐标，保留显示/全局价格信息
+    - draw_wind_candlestick_chart/draw_wind_axes_and_labels 提供统一风格输出
+    - 字体/边界/虚线/时间刻度等基础工具函数
+
+    优点:
+    - 风格一致、复用性强、减少重复代码
+    - 像素坐标运算简单、性能稳定
+
+    局限:
+    - 静态位图，不含交互；需要控制宽高以避免拥挤
+    - 价格映射依赖 display_min/max，极端数据需预留边距
+
+    维护建议:
+    - 新增绘制能力时，优先扩展基础类以被子类复用
+    - 避免在子类复制 normalize/坐标轴逻辑
+    """
     
     def __init__(self, output_dir="images", width=600, height=400):
         self.output_dir = output_dir

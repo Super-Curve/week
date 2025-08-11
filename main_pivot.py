@@ -16,7 +16,6 @@
 import os
 import json
 import argparse
-from src.core.stock_data_processor import StockDataProcessor
 from src.analyzers.advanced_pivot_analyzer import EnterprisesPivotAnalyzer
 from src.generators.pivot_chart_generator import PivotChartGenerator
 from src.generators.pivot_html_generator import PivotHTMLGenerator
@@ -102,9 +101,10 @@ def analyze_pivot_points(stock_data_dict, max_stocks=None, method='enterprise_en
             # 使用企业级分析器进行检测
             print(f"🔍 分析 {code}...")
             pivot_result = analyzer.detect_pivot_points(
-                data, 
+                data,
                 method=method,
-                sensitivity=sensitivity
+                sensitivity=sensitivity,
+                frequency='weekly'
             )
             
             if pivot_result and pivot_result.get('filtered_pivot_highs') is not None:
@@ -199,15 +199,9 @@ def save_analysis_results(pivot_results, output_dir):
 def create_navigation_integration():
     """创建导航集成，更新主index.html文件"""
     main_index_path = "output/index.html"
-    
-    # 检查主导航文件是否存在
-    if not os.path.exists(main_index_path):
-        print("主导航文件不存在，创建新的导航页面...")
-        create_main_navigation()
-    else:
-        print("主导航文件已存在，建议手动添加高低点分析链接")
-        print("请在 output/index.html 中添加:")
-        print('<a href="pivot/index.html">高低点分析</a>')
+    # 统一覆盖生成最新的主页
+    print("生成/更新主导航页面...")
+    create_main_navigation()
 
 
 def create_main_navigation():
@@ -218,91 +212,77 @@ def create_main_navigation():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>A股技术分析平台</title>
+    <title>A股量化分析平台 - 首页</title>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            margin: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .container {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 3rem;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
-            text-align: center;
-            max-width: 600px;
-        }
-        
-        h1 {
-            color: #2c3e50;
-            margin-bottom: 2rem;
-            font-size: 2.5rem;
-        }
-        
-        .nav-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-            margin-top: 2rem;
-        }
-        
-        .nav-link {
-            display: block;
-            background: linear-gradient(135deg, #3498db, #2980b9);
-            color: white;
-            text-decoration: none;
-            padding: 1.5rem;
-            border-radius: 15px;
-            transition: all 0.3s ease;
-            font-weight: bold;
-        }
-        
-        .nav-link:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(52, 152, 219, 0.3);
-        }
-        
-        .nav-link.new {
-            background: linear-gradient(135deg, #e74c3c, #c0392b);
-        }
-        
-        .nav-link.new:hover {
-            box-shadow: 0 10px 30px rgba(231, 76, 60, 0.3);
-        }
+        :root{--bg:#0b1020;--card:#121832;--card2:#0f1530;--grad1:#2a48ff;--grad2:#00d4ff;--accent:#00ffa3;--muted:#99a3b3;--text:#e6eef9}
+        *{box-sizing:border-box}
+        body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;background:radial-gradient(1200px 600px at 10% -10%,rgba(0,212,255,.2),transparent),radial-gradient(1200px 700px at 110% 10%,rgba(42,72,255,.18),transparent),linear-gradient(180deg,#0b1020 0%,#0a0f1e 100%);color:var(--text)}
+        .wrap{max-width:1120px;margin:0 auto;padding:48px 24px 64px}
+        .hero{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:32px}
+        .title{font-size:32px;font-weight:800;letter-spacing:.5px}
+        .subtitle{color:var(--muted);margin-top:8px}
+        .badge{display:inline-block;background:linear-gradient(135deg,var(--grad1),var(--grad2));padding:6px 12px;border-radius:999px;font-size:12px;color:#001018}
+        .grid{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:18px}
+        @media(max-width:980px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+        @media(max-width:640px){.grid{grid-template-columns:1fr}}
+        .card{position:relative;background:linear-gradient(180deg,rgba(18,24,50,.92),rgba(15,21,48,.88));border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:18px 16px;min-height:100px;box-shadow:0 8px 30px rgba(0,0,0,.35);transition:transform .2s ease, box-shadow .2s ease}
+        .card:hover{transform:translateY(-3px);box-shadow:0 12px 36px rgba(0,0,0,.45)}
+        .card h3{margin:4px 0 6px 0;font-size:16px}
+        .card p{margin:0;color:var(--muted);font-size:12px}
+        .card a{position:absolute;inset:0;border-radius:16px;text-indent:-9999px}
+        .tag{position:absolute;top:10px;right:10px;font-size:11px;color:#001018;background:linear-gradient(135deg,#00ffa3,#77ffe7);padding:4px 8px;border-radius:999px}
+        .footer{margin-top:36px;color:var(--muted);font-size:12px;text-align:center}
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🚀 A股技术分析平台</h1>
-        <p>专业级量化分析工具集</p>
-        
-        <div class="nav-grid">
-            <a href="arc/index.html" class="nav-link">
-                📊 大弧底分析
-            </a>
-            <a href="uptrend/index.html" class="nav-link">
-                📈 上升通道分析
-            </a>
-            <a href="kline/index.html" class="nav-link">
-                📋 K线图展示
-            </a>
-            <a href="volatility/index.html" class="nav-link">
-                📉 波动率分析
-            </a>
-            <a href="similarity/index.html" class="nav-link">
-                🔍 相似度分析
-            </a>
-            <a href="pivot/index.html" class="nav-link new">
-                🎯 高低点分析 <span style="font-size: 0.8em;">[新功能]</span>
-            </a>
+    <div class="wrap">
+      <div class="hero">
+        <div>
+          <div class="badge">A股量化分析平台</div>
+          <div class="title">量化研究 · 形态挖掘 · 交易辅助</div>
+          <div class="subtitle">统一数据库数据源 · 自适应阈值 · 专业可视化</div>
         </div>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <span class="tag">首选</span>
+          <h3>📋 K线图展示</h3>
+          <p>批量周K图与图库导航，快速巡检数据质量</p>
+          <a href="kline/index.html">K线图展示</a>
+        </div>
+        <div class="card">
+          <h3>📊 大弧底</h3>
+          <p>全市场扫描弧底形态与相似度，产出 ARC TOP 列表</p>
+          <a href="arc/index.html">大弧底</a>
+        </div>
+        <div class="card">
+          <h3>🎯 周高低点</h3>
+          <p>ZigZag+ATR（周频），更稳健的结构转折识别</p>
+          <a href="pivot/index.html">周高低点</a>
+        </div>
+        <div class="card">
+          <span class="tag">新</span>
+          <h3>⚡ 日高低点</h3>
+          <p>近3个月日频转折，低延迟信号，交易辅助</p>
+          <a href="pivot_day/index.html">日高低点</a>
+        </div>
+        <div class="card">
+          <h3>📈 上升通道</h3>
+          <p>大弧底标的优先，专业通道拟合与质量评分</p>
+          <a href="uptrend/index.html">上升通道</a>
+        </div>
+        <div class="card">
+          <h3>🔍 形态相似度</h3>
+          <p>图像相似度与合成指标，快速发现相近走势</p>
+          <a href="similarity/index.html">形态相似度</a>
+        </div>
+        <div class="card">
+          <h3>📉 波动率分析</h3>
+          <p>ATR / Parkinson / Garman-Klass 等多估计器</p>
+          <a href="volatility/index.html">波动率分析</a>
+        </div>
+      </div>
+      <div class="footer">© 2024 量化研究平台 · 数据来自数据库 · ZigZag+ATR 自适应阈值</div>
     </div>
 </body>
 </html>
@@ -318,16 +298,15 @@ def create_main_navigation():
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='企业级A股高低点分析系统 - 融合顶级量化交易技术的智能转折点识别')
-    parser.add_argument('--csv', type=str, default='/Users/kangfei/Downloads/result.csv', help='CSV数据文件路径')
+    # 统一使用数据库作为数据源，去除CSV参数依赖
     parser.add_argument('--arc-json', default='output/arc/top_100.json', help='大弧底分析结果JSON文件路径')
     parser.add_argument('--max', type=int, help='最大分析股票数量（用于测试）')
     parser.add_argument('--clear-cache', action='store_true', help='清除缓存重新处理数据')
     parser.add_argument('--output', default='output/pivot', help='输出目录')
     parser.add_argument('--method', 
-                      choices=['enterprise_ensemble', 'fractal_dimension', 'statistical_significance', 
-                              'adaptive_ml', 'microstructure', 'multi_timeframe'], 
-                      default='enterprise_ensemble', 
-                      help='企业级检测方法（推荐：enterprise_ensemble）')
+                      choices=['zigzag_atr'], 
+                      default='zigzag_atr', 
+                      help='检测方法（仅保留：zigzag_atr）')
     parser.add_argument('--sensitivity', choices=['conservative', 'balanced', 'aggressive'], 
                       default='balanced', help='检测敏感度')
     
@@ -357,16 +336,15 @@ def main():
         print("无法加载大弧底分析结果，程序退出")
         return
     
-    # 2. 加载和处理股票数据
-    print("\n📈 步骤2: 加载和处理股票数据")
-    try:
-        processor = StockDataProcessor(args.csv)
-        processor.process_weekly_data()
-        all_stock_data = processor.get_all_data()
-        print(f"成功加载 {len(all_stock_data)} 只股票的周K线数据")
-    except Exception as e:
-        print(f"数据加载失败: {e}")
+    # 2. 加载和处理股票数据（统一数据库数据源）
+    print("\n📈 步骤2: 加载和处理股票数据（数据库）")
+    from src.utils.common_utils import load_and_process_data
+    # 只加载ARC列表（最多200只），和 uptrend 一致
+    all_stock_data = load_and_process_data(use_arc_top=True)
+    if not all_stock_data:
+        print("数据加载失败")
         return
+    print(f"成功加载 {len(all_stock_data)} 只股票的周K线数据")
     
     # 3. 根据大弧底结果过滤股票数据
     print("\n🔍 步骤3: 过滤大弧底股票数据")

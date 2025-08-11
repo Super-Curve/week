@@ -41,15 +41,20 @@ case $ANALYSIS_TYPE in
         echo "运行高低点分析..."
         $PYTHON_PATH main_pivot.py "${@:2}"
         ;;
+    "pivot_day")
+        echo "运行最近三个月日频高低点分析..."
+        $PYTHON_PATH main_pivot_day.py "${@:2}"
+        ;;
     "all")
         echo "运行统一分析脚本..."
         $PYTHON_PATH run_analysis.py "${@:2}"
         ;;
     *)
-        echo "支持的分析类型: arc, uptrend, kline, volatility, similarity, pivot, all"
+        echo "支持的分析类型: arc, uptrend, kline, volatility, similarity, pivot, pivot_day, all"
         echo "使用方法: $0 [分析类型] [参数]"
         echo "示例: $0 arc --max 100"
         echo "示例: $0 pivot --max 20"
+        echo "示例: $0 pivot_day --days 90 --max 50"
         echo "示例: $0 all --clear-cache"
         exit 1
         ;;

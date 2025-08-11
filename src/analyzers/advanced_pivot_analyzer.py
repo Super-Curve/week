@@ -32,16 +32,37 @@ except ImportError:
 
 class EnterprisesPivotAnalyzer:
     """
-    企业级高低点分析器 - 融合多种顶级量化交易技术
-    
-    核心技术栈：
-    1. 分形维度分析 - 基于分形几何的转折点识别
-    2. 多时间框架确认 - 确保不同时间尺度的一致性
-    3. 统计显著性验证 - 使用统计学方法验证转折点
-    4. 动态阈值调整 - 基于市场状态的自适应阈值
-    5. 机器学习增强 - 使用集成学习方法
-    6. 市场微观结构 - 基于成交量和价格行为分析
-    7. 波动率制度检测 - 识别不同的波动率环境
+    企业级高低点分析器
+
+    用途:
+    - 提供统一的高低点识别接口，当前仅保留 zigzag_atr 信号方法，产出交易员可用的入场/出场级别的转折点。
+
+    实现方式:
+    - 预处理: 数据清洗/IQR 去噪、OHLC 合规校正、缺失填补
+    - 技术套件: 计算波动率/趋势/动量/成交量/分形等指标，供检测与质量评估复用
+    - 识别: 使用 ZigZag + ATR 自适应阈值，时间顺序构建交替高低点，支持“同向更极端替换”和最小K线间隔约束
+    - 评估: 统一生成质量指标/分析报告/过滤统计，并标准化输出结构；HTML 可读取 pivot_meta 解释每个点入选原因
+
+    优点:
+    - 低延迟、可解释（prominence、阈值、ATR%、swing_pct），贴近实际交易使用
+    - 阈值随 ATR 自适应，不同波动环境下具有稳健性
+    - 输出格式向后兼容，易于与图表/HTML 复用
+
+    局限:
+    - 仍属启发式方法，对噪声/跳空和极端行情需要谨慎；敏感度参数需结合标的微调
+    - 未引入监督学习标签校准；不同市场/周期应单独回测
+
+    维护建议:
+    - 仅在 _get_sensitivity_params 中调整风格参数，保持接口稳定
+    - 如需扩展指标/元信息，优先在 pivot_meta 中追加键，避免破坏下游
+    - 对外暴露 detect_pivot_points 的返回键名请保持不变
+
+    关键接口:
+    - detect_pivot_points(data, method='zigzag_atr', sensitivity) -> dict
+    - 重要返回键: raw_pivot_highs/lows, filtered_pivot_highs/lows, pivot_meta, accuracy_score, volatility_metrics
+
+    依赖:
+    - 可选 TA-Lib/Sklearn；缺失时自动降级
     """
     
     def __init__(self):
@@ -58,19 +79,13 @@ class EnterprisesPivotAnalyzer:
             'microstructure_window': 10
         }
         
-    def detect_pivot_points(self, data, method='enterprise_ensemble', sensitivity='balanced', **kwargs):
+    def detect_pivot_points(self, data, method='zigzag_atr', sensitivity='balanced', frequency: str = 'weekly', **kwargs):
         """
         统一的高低点检测接口 - 企业级检测系统
         
         Args:
             data: pandas DataFrame，包含OHLCV数据
-            method: str, 检测方法
-                - 'enterprise_ensemble': 企业级集成方法（推荐）
-                - 'fractal_dimension': 分形维度分析
-                - 'multi_timeframe': 多时间框架确认
-                - 'statistical_significance': 统计显著性验证
-                - 'adaptive_ml': 自适应机器学习
-                - 'microstructure': 市场微观结构分析
+            method: str, 检测方法（仅支持 'zigzag_atr'）
             sensitivity: str, 敏感度 ['conservative', 'balanced', 'aggressive']
             
         Returns:
@@ -90,22 +105,10 @@ class EnterprisesPivotAnalyzer:
             # 2. 计算全方位技术指标套件
             technical_suite = self._calculate_technical_suite(processed_data)
             
-            # 3. 根据方法选择检测策略
-            if method == 'enterprise_ensemble':
-                pivot_results = self._enterprise_ensemble_detection(processed_data, technical_suite, sensitivity)
-            elif method == 'fractal_dimension':
-                pivot_results = self._fractal_dimension_detection(processed_data, technical_suite, sensitivity)
-            elif method == 'multi_timeframe':
-                pivot_results = self._multi_timeframe_detection(processed_data, technical_suite, sensitivity)
-            elif method == 'statistical_significance':
-                pivot_results = self._statistical_significance_detection(processed_data, technical_suite, sensitivity)
-            elif method == 'adaptive_ml':
-                pivot_results = self._adaptive_ml_detection(processed_data, technical_suite, sensitivity)
-            elif method == 'microstructure':
-                pivot_results = self._microstructure_detection(processed_data, technical_suite, sensitivity)
-            else:
-                # 向后兼容旧方法
-                pivot_results = self._legacy_detection(processed_data, technical_suite, method, sensitivity)
+            # 3. 统一使用 ZigZag+ATR 方法（其余方法已移除）
+            if method != 'zigzag_atr':
+                print(f"提示: 方法 {method} 已废弃，已自动切换为 zigzag_atr")
+            pivot_results = self._zigzag_atr_detection(processed_data, technical_suite, sensitivity, frequency)
             
             # 4. 质量评估和验证
             quality_metrics = self._comprehensive_quality_assessment(pivot_results, processed_data, technical_suite)
@@ -345,187 +348,203 @@ class EnterprisesPivotAnalyzer:
     
     # ========================= 检测策略实现 =========================
     
-    def _enterprise_ensemble_detection(self, data, technical_suite, sensitivity):
-        """企业级集成检测方法"""
-        print("📊 执行企业级集成检测...")
-        
-        high_prices = data['high'].values
-        low_prices = data['low'].values
-        
-        # 获取敏感度参数
-        params = self._get_sensitivity_params(sensitivity)
-        
-        # 1. 基础极值检测
-        raw_highs, raw_lows = self._find_raw_pivot_points(high_prices, low_prices, params['min_distance'])
-        
-        # 2. 多维度评分
-        high_candidates = []
-        low_candidates = []
-        
-        for idx in raw_highs:
-            score = self._calculate_enterprise_score(idx, high_prices, True, technical_suite, params)
-            if score >= params['score_threshold']:
-                high_candidates.append((idx, score))
-        
-        for idx in raw_lows:
-            score = self._calculate_enterprise_score(idx, low_prices, False, technical_suite, params)
-            if score >= params['score_threshold']:
-                low_candidates.append((idx, score))
-        
-        # 3. 排序并选择最佳候选
-        high_candidates.sort(key=lambda x: x[1], reverse=True)
-        low_candidates.sort(key=lambda x: x[1], reverse=True)
-        
-        return {
-            'raw_pivot_highs': raw_highs,
-            'raw_pivot_lows': raw_lows,
-            'filtered_pivot_highs': [x[0] for x in high_candidates],
-            'filtered_pivot_lows': [x[0] for x in low_candidates],
-            'pivot_scores': {'highs': high_candidates, 'lows': low_candidates}
-        }
+    # 已移除其他方法实现，统一使用 _zigzag_atr_detection
     
-    def _fractal_dimension_detection(self, data, technical_suite, sensitivity):
-        """基于分形维度的检测"""
-        print("🔍 执行分形维度分析...")
-        
+    # 已移除其他方法实现，统一使用 _zigzag_atr_detection
+    
+    def _statistical_significance_detection(self, data, technical_suite, sensitivity, frequency: str = 'weekly'):
+        """基于统计显著性的检测（增强版）
+        目标：更贴近交易员的“显著高低点”认知，突出：
+        - 突出度（prominence）足够高（ATR/波动率自适应）
+        - 与两侧窗口相比显著（t-test/均值差异）
+        - 有最小振幅（百分比/ATR）
+        - 有后验确认（价格在数根K线内向反方向运行足够幅度）
+        - 枢轴之间保持时间分离，避免簇拥
+        """
+        print("📈 执行统计显著性检验（增强版）...")
+
+        close_prices = data['close'].values
         high_prices = data['high'].values
         low_prices = data['low'].values
-        params = self._get_sensitivity_params(sensitivity)
+        params = self._get_sensitivity_params(sensitivity, frequency)
         
-        # 基础检测
-        raw_highs, raw_lows = self._find_raw_pivot_points(high_prices, low_prices, params['min_distance'])
-        
-        # 分形维度过滤
-        fractal_info = technical_suite['fractal']
-        hurst_threshold = 0.5  # Hurst > 0.5 表示趋势性，< 0.5 表示均值回归
-        
+        # 计算ATR价格尺度（用于 prominence & 确认）
+        atr_price = self._compute_atr_price_scale(close_prices, technical_suite.get('volatility', {}))
+        # 全局最小 prominence（价格单位）
+        min_prom_price = np.nanmedian(atr_price) * params.get('min_prominence_atr', 1.0)
+        min_swing_pct = params.get('min_swing_pct', 0.02)  # 2%
+
+        # 1) 通过 prominence 初筛候选
+        raw_highs, high_prom_map = self._find_peaks_with_prominence(
+            high_prices, distance=params['min_distance'], min_prominence=min_prom_price
+        )
+        raw_lows, low_prom_map_neg = self._find_peaks_with_prominence(
+            -low_prices, distance=params['min_distance'], min_prominence=min_prom_price
+        )
+        # 低点的 prominence 以价格正数表达
+        low_prom_map = {k: float(v) for k, v in low_prom_map_neg.items()}
+        # 将低点索引还原
+        raw_lows = raw_lows
+
+        # 2) 严格的统计显著性检验（双侧窗口）+ 最小振幅（百分比）
         filtered_highs = []
         filtered_lows = []
+        left_win = right_win = max(5, params['min_distance'])
+
+        pivot_meta_highs = {}
+        pivot_meta_lows = {}
         
         for idx in raw_highs:
-            # 检查局部分形特征
-            local_hurst = self._calculate_local_hurst(high_prices, idx, window=10)
-            if local_hurst < hurst_threshold:  # 均值回归环境中的高点更可靠
-                filtered_highs.append(idx)
+            passed, z_l, z_r = self._is_statistically_significant_bilateral(high_prices, idx, is_high=True,
+                                                                            left=left_win, right=right_win)
+            if passed:
+                # 最小振幅：相对两侧均值增幅
+                left_mean = np.mean(high_prices[max(0, idx - left_win):idx]) if idx > 0 else high_prices[idx]
+                right_mean = np.mean(high_prices[idx+1:idx+1+right_win]) if idx < len(high_prices)-1 else high_prices[idx]
+                ref_mean = max(left_mean, right_mean)
+                swing_ok = ref_mean > 0 and (high_prices[idx] - ref_mean) / ref_mean >= min_swing_pct
+                conf_pass, move_val = self._confirm_pivot_move(close_prices, idx, is_high=True,
+                                                               confirm_bars=params.get('confirm_bars', 2),
+                                                               min_move=np.nanmedian(atr_price) * params.get('confirm_atr', 0.8))
+                if swing_ok and conf_pass:
+                    filtered_highs.append(idx)
+                    pivot_meta_highs[idx] = {
+                        'prominence': float(high_prom_map.get(idx, 0.0)),
+                        'confirm_move': float(move_val),
+                        'z_left': float(z_l),
+                        'z_right': float(z_r)
+                    }
         
         for idx in raw_lows:
-            local_hurst = self._calculate_local_hurst(low_prices, idx, window=10)
-            if local_hurst < hurst_threshold:  # 均值回归环境中的低点更可靠
-                filtered_lows.append(idx)
+            passed, z_l, z_r = self._is_statistically_significant_bilateral(low_prices, idx, is_high=False,
+                                                                            left=left_win, right=right_win)
+            if passed:
+                left_mean = np.mean(low_prices[max(0, idx - left_win):idx]) if idx > 0 else low_prices[idx]
+                right_mean = np.mean(low_prices[idx+1:idx+1+right_win]) if idx < len(low_prices)-1 else low_prices[idx]
+                ref_mean = min(left_mean, right_mean)
+                swing_ok = ref_mean > 0 and (ref_mean - low_prices[idx]) / ref_mean >= min_swing_pct
+                conf_pass, move_val = self._confirm_pivot_move(close_prices, idx, is_high=False,
+                                                               confirm_bars=params.get('confirm_bars', 2),
+                                                               min_move=np.nanmedian(atr_price) * params.get('confirm_atr', 0.8))
+                if swing_ok and conf_pass:
+                    filtered_lows.append(idx)
+                    pivot_meta_lows[idx] = {
+                        'prominence': float(low_prom_map.get(idx, 0.0)),
+                        'confirm_move': float(move_val),
+                        'z_left': float(z_l),
+                        'z_right': float(z_r)
+                    }
+
+        # 3) 枢轴之间保持最小间隔（避免过密）
+        filtered_highs = self._enforce_min_separation(filtered_highs, params.get('separation_bars', 3))
+        filtered_lows = self._enforce_min_separation(filtered_lows, params.get('separation_bars', 3))
+
+        # 元信息：用于HTML展示
+        meta = {
+            'pivot_meta_highs': {int(k): v for k, v in pivot_meta_highs.items() if k in filtered_highs},
+            'pivot_meta_lows': {int(k): v for k, v in pivot_meta_lows.items() if k in filtered_lows}
+        }
         
         return {
             'raw_pivot_highs': raw_highs,
             'raw_pivot_lows': raw_lows,
             'filtered_pivot_highs': filtered_highs,
-            'filtered_pivot_lows': filtered_lows
+            'filtered_pivot_lows': filtered_lows,
+            'pivot_meta': meta
         }
-    
-    def _statistical_significance_detection(self, data, technical_suite, sensitivity):
-        """基于统计显著性的检测"""
-        print("📈 执行统计显著性检验...")
-        
-        high_prices = data['high'].values
-        low_prices = data['low'].values
-        params = self._get_sensitivity_params(sensitivity)
-        
-        raw_highs, raw_lows = self._find_raw_pivot_points(high_prices, low_prices, params['min_distance'])
-        
-        filtered_highs = []
-        filtered_lows = []
-        
-        # 对每个候选点进行统计检验
-        for idx in raw_highs:
-            if self._is_statistically_significant(high_prices, idx, True):
-                filtered_highs.append(idx)
-        
-        for idx in raw_lows:
-            if self._is_statistically_significant(low_prices, idx, False):
-                filtered_lows.append(idx)
-        
-        return {
-            'raw_pivot_highs': raw_highs,
-            'raw_pivot_lows': raw_lows,
-            'filtered_pivot_highs': filtered_highs,
-            'filtered_pivot_lows': filtered_lows
-        }
-    
-    def _adaptive_ml_detection(self, data, technical_suite, sensitivity):
-        """自适应机器学习检测"""
-        print("🤖 执行机器学习增强检测...")
-        
-        if not self.ml_available:
-            print("⚠️  机器学习库不可用，使用基础方法")
-            return self._enterprise_ensemble_detection(data, technical_suite, sensitivity)
-        
-        high_prices = data['high'].values
-        low_prices = data['low'].values
-        params = self._get_sensitivity_params(sensitivity)
-        
-        raw_highs, raw_lows = self._find_raw_pivot_points(high_prices, low_prices, params['min_distance'])
-        
-        # 构建特征矩阵
-        features = self._build_ml_features(data, technical_suite)
-        
-        if features.shape[0] < 20:
-            print("⚠️  数据不足，使用基础方法")
-            return self._enterprise_ensemble_detection(data, technical_suite, sensitivity)
-        
+
+    # ======== 辅助：统计强化与交易员认知贴合 ========
+    def _compute_atr_price_scale(self, close_prices: np.ndarray, vol_suite: dict) -> np.ndarray:
+        """将 ATR% 转换为价格尺度（若存在）；否则用收益率波动率近似。"""
+        atr_pct = vol_suite.get('atr_14_pct')
+        if isinstance(atr_pct, np.ndarray) and len(atr_pct) == len(close_prices):
+            return (atr_pct / 100.0) * np.maximum(close_prices, 1e-8)
+        # 退化方案：用过去20期的对数收益率标准差近似
+        returns = np.diff(np.log(np.maximum(close_prices, 1e-8))) if len(close_prices) > 1 else np.array([0.0])
+        vol = np.zeros_like(close_prices)
+        if len(returns) > 5:
+            for i in range(1, len(close_prices)):
+                win = returns[max(1, i-20):i]
+                vol[i] = np.std(win) * close_prices[i]
+        return vol
+
+    def _find_peaks_with_prominence(self, series: np.ndarray, distance: int, min_prominence: float):
+        """基于 prominence 的峰值初筛（高点传原序列，低点传负序列）。
+
+        返回:
+            peaks(list[int]), prom_map(dict[idx->prominence_price])
+        """
         try:
-            # 使用异常检测识别转折点
-            scaler = RobustScaler()
-            features_scaled = scaler.fit_transform(features)
-            
-            iso_forest = IsolationForest(contamination=0.15, random_state=42)
-            anomaly_scores = iso_forest.fit_predict(features_scaled)
-            anomaly_prob = iso_forest.score_samples(features_scaled)
-            
-            # 筛选高质量候选点
-            high_candidates = []
-            low_candidates = []
-            
-            for idx in raw_highs:
-                if idx < len(anomaly_prob):
-                    ml_score = abs(anomaly_prob[idx])
-                    if ml_score > np.percentile(np.abs(anomaly_prob), 70):
-                        high_candidates.append(idx)
-            
-            for idx in raw_lows:
-                if idx < len(anomaly_prob):
-                    ml_score = abs(anomaly_prob[idx])
-                    if ml_score > np.percentile(np.abs(anomaly_prob), 70):
-                        low_candidates.append(idx)
-            
-            return {
-                'raw_pivot_highs': raw_highs,
-                'raw_pivot_lows': raw_lows,
-                'filtered_pivot_highs': high_candidates,
-                'filtered_pivot_lows': low_candidates
-            }
-            
-        except Exception as e:
-            print(f"⚠️  机器学习检测失败: {e}，使用基础方法")
-            return self._enterprise_ensemble_detection(data, technical_suite, sensitivity)
+            peaks, props = find_peaks(series, distance=max(1, distance), prominence=max(1e-8, float(min_prominence)))
+            prominences = props.get('prominences', np.array([]))
+            prom_map = {}
+            for i, p in enumerate(peaks):
+                prom_map[int(p)] = float(prominences[i]) if i < len(prominences) else 0.0
+            return peaks.tolist(), prom_map
+        except Exception:
+            # 回退到相对极值（无 prominence 信息）
+            pts = argrelextrema(series, np.greater, order=max(1, distance))[0].tolist()
+            return pts, {}
+
+    def _is_statistically_significant_bilateral(self, prices: np.ndarray, idx: int, is_high: bool,
+                                                left: int, right: int, alpha: float = 0.05):
+        """双侧窗口显著性：当前价需显著高于（低于）两侧窗口均值。
+        返回: (passed: bool, z_left: float, z_right: float)
+        """
+        start_l = max(0, idx - left)
+        left_arr = prices[start_l:idx]
+        right_arr = prices[idx+1:idx+1+right]
+        if len(left_arr) < 3 or len(right_arr) < 3:
+            return False, 0.0, 0.0
+        cur = prices[idx]
+        # 简化：当前价与两侧均值/标准差对比（稳定可靠且高效）
+        def z_side(side_arr, higher: bool):
+            mean = np.mean(side_arr)
+            std = np.std(side_arr) + 1e-8
+            z = (cur - mean) / std
+            return z
+        z_l = z_side(left_arr, higher=is_high)
+        z_r = z_side(right_arr, higher=is_high)
+        passed = (z_l > 1.64 and z_r > 1.64) if is_high else (z_l < -1.64 and z_r < -1.64)
+        return passed, float(z_l), float(z_r)
+
+    def _confirm_pivot_move(self, close_prices: np.ndarray, idx: int, is_high: bool,
+                             confirm_bars: int, min_move: float):
+        """后验确认：在 confirm_bars 内，价格**反向**移动至少 min_move。
+        返回: (passed: bool, move_value: float)
+        """
+        end = min(len(close_prices), idx + 1 + max(1, confirm_bars))
+        if end <= idx + 1:
+            return False, 0.0
+        window = close_prices[idx+1:end]
+        if len(window) == 0:
+            return False, 0.0
+        if is_high:
+            # 高点：后续有足够下行
+            drop = close_prices[idx] - np.min(window)
+            return drop >= max(1e-8, float(min_move)), float(drop)
+        else:
+            # 低点：后续有足够上行
+            rise = np.max(window) - close_prices[idx]
+            return rise >= max(1e-8, float(min_move)), float(rise)
+
+    def _enforce_min_separation(self, indices: list, min_sep: int) -> list:
+        if not indices:
+            return []
+        indices = sorted(indices)
+        kept = [indices[0]]
+        for i in indices[1:]:
+            if i - kept[-1] >= max(1, min_sep):
+                kept.append(i)
+        return kept
     
-    def _microstructure_detection(self, data, technical_suite, sensitivity):
-        """市场微观结构分析检测"""
-        print("🔬 执行市场微观结构分析...")
-        
-        # 这里可以实现基于订单流、价差、深度等微观结构的分析
-        # 暂时使用基础方法
-        return self._enterprise_ensemble_detection(data, technical_suite, sensitivity)
+    # 已移除其他方法实现，统一使用 _zigzag_atr_detection
     
-    def _multi_timeframe_detection(self, data, technical_suite, sensitivity):
-        """多时间框架确认检测"""
-        print("⏰ 执行多时间框架确认...")
-        
-        # 这里可以实现多时间框架的分析
-        # 暂时使用基础方法
-        return self._enterprise_ensemble_detection(data, technical_suite, sensitivity)
+    # 已移除其他方法实现，统一使用 _zigzag_atr_detection
     
-    def _legacy_detection(self, data, technical_suite, method, sensitivity):
-        """向后兼容的检测方法"""
-        print(f"🔄 执行向后兼容检测: {method}")
-        return self._enterprise_ensemble_detection(data, technical_suite, sensitivity)
+    # 已移除其他方法实现，统一使用 _zigzag_atr_detection
+    
+    # 已移除其他方法实现，统一使用 _zigzag_atr_detection
     
     # ========================= 辅助方法 =========================
     
@@ -636,14 +655,243 @@ class EnterprisesPivotAnalyzer:
         # 简化实现
         return 0.5
     
-    def _get_sensitivity_params(self, sensitivity):
-        """获取敏感度参数"""
-        params = {
-            'conservative': {'min_distance': 5, 'score_threshold': 0.7},
-            'balanced': {'min_distance': 3, 'score_threshold': 0.5},
-            'aggressive': {'min_distance': 2, 'score_threshold': 0.3}
+    def _get_sensitivity_params(self, sensitivity: str, frequency: str = 'weekly'):
+        """获取敏感度参数，按频率（日/周）提供差异化默认值。"""
+        # 周频默认参数（周K）
+        weekly = {
+            'conservative': {
+                'min_distance': 5,
+                'score_threshold': 0.7,
+                'min_prominence_atr': 1.2,
+                'min_swing_pct': 0.025,
+                'confirm_bars': 3,
+                'confirm_atr': 1.0,
+                'separation_bars': 4,
+                'zigzag_min_distance': 5,
+                'zigzag_base_swing_pct': 0.035,   # 3.5%
+                'zigzag_atr_mult': 0.80,
+                'zigzag_min_bars_between': 2,
+                'zigzag_prom_atr_mult': 0.80
+            },
+            'balanced': {
+                'min_distance': 3,
+                'score_threshold': 0.5,
+                'min_prominence_atr': 1.0,
+                'min_swing_pct': 0.020,
+                'confirm_bars': 2,
+                'confirm_atr': 0.8,
+                'separation_bars': 3,
+                'zigzag_min_distance': 3,
+                'zigzag_base_swing_pct': 0.025,   # 2.5%
+                'zigzag_atr_mult': 0.60,
+                'zigzag_min_bars_between': 2,
+                'zigzag_prom_atr_mult': 0.60
+            },
+            'aggressive': {
+                'min_distance': 2,
+                'score_threshold': 0.3,
+                'min_prominence_atr': 0.8,
+                'min_swing_pct': 0.015,
+                'confirm_bars': 1,
+                'confirm_atr': 0.6,
+                'separation_bars': 2,
+                'zigzag_min_distance': 2,
+                'zigzag_base_swing_pct': 0.018,   # 1.8%
+                'zigzag_atr_mult': 0.50,
+                'zigzag_min_bars_between': 1,
+                'zigzag_prom_atr_mult': 0.50
+            }
         }
-        return params.get(sensitivity, params['balanced'])
+
+        # 日频覆盖（近3个月）
+        daily_overrides = {
+            'conservative': {
+                'zigzag_min_distance': 3,
+                'zigzag_base_swing_pct': 0.018,  # 1.8%
+                'zigzag_atr_mult': 0.80,
+                'zigzag_min_bars_between': 3,
+                'zigzag_prom_atr_mult': 1.00,
+                'min_distance': 3
+            },
+            'balanced': {
+                'zigzag_min_distance': 2,
+                'zigzag_base_swing_pct': 0.012,  # 1.2%
+                'zigzag_atr_mult': 0.60,
+                'zigzag_min_bars_between': 2,
+                'zigzag_prom_atr_mult': 0.80,
+                'min_distance': 2
+            },
+            'aggressive': {
+                'zigzag_min_distance': 2,
+                'zigzag_base_swing_pct': 0.008,  # 0.8%
+                'zigzag_atr_mult': 0.50,
+                'zigzag_min_bars_between': 1,
+                'zigzag_prom_atr_mult': 0.60,
+                'min_distance': 2
+            }
+        }
+
+        base = weekly.get(sensitivity, weekly['balanced']).copy()
+        if str(frequency).lower() == 'daily':
+            override = daily_overrides.get(sensitivity, {})
+            base.update(override)
+        return base
+
+    def _zigzag_atr_detection(self, data, technical_suite, sensitivity, frequency: str = 'weekly'):
+        """ZigZag + ATR 自适应阈值的信号模式（更贴近交易员进出场）。
+
+        特征：
+        - 更宽松的摆动阈值：threshold_pct = max(base_swing_pct, ATR_pct * atr_mult)
+        - 使用 prominence 初筛候选，随后按时间顺序交替构建 pivots
+        - 保留最极端点（同向候选只保留更高/更低者）
+        - 限制相邻 pivot 的最小K线间隔，减少抖动
+        """
+
+        close_prices = data['close'].values
+        high_prices = data['high'].values
+        low_prices = data['low'].values
+        params = self._get_sensitivity_params(sensitivity, frequency)
+
+        # 价格尺度与阈值
+        vol_suite = technical_suite.get('volatility', {})
+        atr_pct_arr = vol_suite.get('atr_14_pct')
+        if not isinstance(atr_pct_arr, np.ndarray) or len(atr_pct_arr) != len(close_prices):
+            atr_pct_arr = np.zeros_like(close_prices) + 2.0  # 退化：假设2%
+
+        base_swing = float(params.get('zigzag_base_swing_pct', 0.015))  # 小幅摆动
+        atr_mult = float(params.get('zigzag_atr_mult', 0.6))
+        min_bars_between = int(params.get('zigzag_min_bars_between', 2))
+        prom_atr_mult = float(params.get('zigzag_prom_atr_mult', 0.6))
+        min_distance = int(params.get('zigzag_min_distance', 2))
+
+        # prominence 初筛
+        atr_price = self._compute_atr_price_scale(close_prices, vol_suite)
+        min_prom_price = np.nanmedian(atr_price) * prom_atr_mult
+        high_candidates, high_prom_map = self._find_peaks_with_prominence(high_prices, distance=min_distance,
+                                                                          min_prominence=min_prom_price)
+        low_candidates, low_prom_map_neg = self._find_peaks_with_prominence(-low_prices, distance=min_distance,
+                                                                            min_prominence=min_prom_price)
+        low_prom_map = {k: float(v) for k, v in low_prom_map_neg.items()}
+
+        # 合并候选并按时间排序，标注类型与价格
+        events = []
+        for idx in high_candidates:
+            if 0 <= idx < len(high_prices):
+                events.append((idx, 'high', float(high_prices[idx])))
+        for idx in low_candidates:
+            if 0 <= idx < len(low_prices):
+                events.append((idx, 'low', float(low_prices[idx])))
+        events.sort(key=lambda x: x[0])
+
+        filtered_highs = []
+        filtered_lows = []
+        pivot_meta_highs = {}
+        pivot_meta_lows = {}
+
+        last_type = None
+        last_idx = None
+        last_price = None
+
+        def dynamic_threshold_pct(i):
+            return max(base_swing, (atr_pct_arr[i] / 100.0) * atr_mult)
+
+        for idx, typ, price in events:
+            # 最小柱间隔约束
+            if last_idx is not None and (idx - last_idx) < min_bars_between:
+                # 同向保留更极端者
+                if last_type == typ:
+                    if (typ == 'high' and price > last_price) or (typ == 'low' and price < last_price):
+                        # 替换最后一个pivot
+                        if typ == 'high' and filtered_highs:
+                            filtered_highs[-1] = idx
+                            last_idx, last_price = idx, price
+                        elif typ == 'low' and filtered_lows:
+                            filtered_lows[-1] = idx
+                            last_idx, last_price = idx, price
+                    # 否则忽略
+                # 异向但太近则忽略
+                continue
+
+            if last_type is None:
+                # 第一个候选直接接受为起始pivot
+                if typ == 'high':
+                    filtered_highs.append(idx)
+                    last_type, last_idx, last_price = 'high', idx, price
+                    pivot_meta_highs[idx] = {
+                        'prominence': float(high_prom_map.get(idx, 0.0)),
+                        'threshold_pct': float(dynamic_threshold_pct(idx)),
+                        'atr_pct': float(atr_pct_arr[idx])
+                    }
+                else:
+                    filtered_lows.append(idx)
+                    last_type, last_idx, last_price = 'low', idx, price
+                    pivot_meta_lows[idx] = {
+                        'prominence': float(low_prom_map.get(idx, 0.0)),
+                        'threshold_pct': float(dynamic_threshold_pct(idx)),
+                        'atr_pct': float(atr_pct_arr[idx])
+                    }
+                continue
+
+            if typ == last_type:
+                # 同向：仅在更极端时替换
+                if (typ == 'high' and price > last_price) or (typ == 'low' and price < last_price):
+                    if typ == 'high' and filtered_highs:
+                        filtered_highs[-1] = idx
+                        last_idx, last_price = idx, price
+                        pivot_meta_highs[idx] = {
+                            'prominence': float(high_prom_map.get(idx, 0.0)),
+                            'threshold_pct': float(dynamic_threshold_pct(idx)),
+                            'atr_pct': float(atr_pct_arr[idx])
+                        }
+                    elif typ == 'low' and filtered_lows:
+                        filtered_lows[-1] = idx
+                        last_idx, last_price = idx, price
+                        pivot_meta_lows[idx] = {
+                            'prominence': float(low_prom_map.get(idx, 0.0)),
+                            'threshold_pct': float(dynamic_threshold_pct(idx)),
+                            'atr_pct': float(atr_pct_arr[idx])
+                        }
+                continue
+
+            # 异向：检查摆动幅度是否达到阈值
+            thr = dynamic_threshold_pct(idx)
+            swing_pct = (abs(price - last_price) / max(1e-8, last_price))
+            if swing_pct >= thr:
+                if typ == 'high':
+                    filtered_highs.append(idx)
+                    pivot_meta_highs[idx] = {
+                        'prominence': float(high_prom_map.get(idx, 0.0)),
+                        'threshold_pct': float(thr),
+                        'atr_pct': float(atr_pct_arr[idx]),
+                        'swing_pct': float(swing_pct)
+                    }
+                else:
+                    filtered_lows.append(idx)
+                    pivot_meta_lows[idx] = {
+                        'prominence': float(low_prom_map.get(idx, 0.0)),
+                        'threshold_pct': float(thr),
+                        'atr_pct': float(atr_pct_arr[idx]),
+                        'swing_pct': float(swing_pct)
+                    }
+                last_type, last_idx, last_price = typ, idx, price
+            # 未达到阈值则忽略（继续等待更远的摆动）
+
+        # 输出格式
+        filtered_highs = self._enforce_min_separation(filtered_highs, max(1, min_bars_between))
+        filtered_lows = self._enforce_min_separation(filtered_lows, max(1, min_bars_between))
+
+        meta = {
+            'pivot_meta_highs': {int(k): v for k, v in pivot_meta_highs.items() if k in filtered_highs},
+            'pivot_meta_lows': {int(k): v for k, v in pivot_meta_lows.items() if k in filtered_lows}
+        }
+
+        return {
+            'raw_pivot_highs': filtered_highs,
+            'raw_pivot_lows': filtered_lows,
+            'filtered_pivot_highs': filtered_highs,
+            'filtered_pivot_lows': filtered_lows,
+            'pivot_meta': meta
+        }
     
     # ========================= 高级计算方法 =========================
     

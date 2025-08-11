@@ -7,6 +7,24 @@ import os
 from .base_chart_generator import BaseChartGenerator
 
 class UptrendChartGenerator(BaseChartGenerator):
+    """
+    上升通道图表生成器
+
+    用途:
+    - 在完整一年数据上绘制 K 线并叠加最近的上升通道区域/通道线/注释。
+
+    实现方式:
+    - 复用简单风格绘制；限定通道绘制范围，避免遮挡；可选半透明区域与虚线边框
+
+    优点:
+    - 直观展示通道范围与关键点
+
+    局限:
+    - 文本/区域覆盖可能与 K 线冲突；需注意尺寸与透明度
+
+    维护建议:
+    - 保持通道数据字典字段一致（slope/intercept/start_idx/end_idx）
+    """
     def __init__(self, output_dir="uptrend_images"):
         # 调用父类初始化，设置默认尺寸为400x300
         super().__init__(output_dir=output_dir, width=400, height=300)
@@ -500,8 +518,4 @@ class UptrendChartGenerator(BaseChartGenerator):
         except Exception as e:
             print(f"绘制通道信息失败: {e}")
 
-    def normalize_price_for_display(self, price, price_info):
-        """标准化价格用于显示"""
-        if price_info['display_max'] == price_info['display_min']:
-            return self.height // 2
-        return ((price_info['display_max'] - price) / (price_info['display_max'] - price_info['display_min'])) * (self.height - 80) + 40 
+    # 复用 BaseChartGenerator.normalize_price_for_display，移除重复实现

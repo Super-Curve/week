@@ -10,6 +10,24 @@ import multiprocessing as mp
 from .base_chart_generator import BaseChartGenerator
 
 class FastChartGenerator(BaseChartGenerator):
+    """
+    快速批量图表生成器
+
+    用途:
+    - 以多进程方式批量生成基础周K线图，供静态图库或其他模块复用。
+
+    实现方式:
+    - multiprocessing.Pool map 并行调用 generate_single_chart；复用 BaseChartGenerator 简单风格
+
+    优点:
+    - 吞吐高、实现简单
+
+    局限:
+    - 多进程在某些环境（如交互式/Windows）需注意入口保护；CPU/I/O 受限时收益有限
+
+    维护建议:
+    - 控制并发数；异常需打印但不要中断批处理
+    """
     def __init__(self, output_dir="images"):
         # 调用父类初始化，设置默认尺寸为400x300
         super().__init__(output_dir=output_dir, width=400, height=300)

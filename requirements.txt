@@ -6,4 +6,6 @@ Pillow
 opencv-python==4.5.5.64
 imagehash
 tqdm
-matplotlib 
+matplotlib
+pymysql
+sqlalchemy 

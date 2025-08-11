@@ -11,11 +11,31 @@ from .base_chart_generator import BaseChartGenerator
 
 
 class PivotChartGenerator(BaseChartGenerator):
-    """高低点图表生成器，专门用于展示关键转折点"""
+    """
+    高低点图表生成器
+
+    用途:
+    - 绘制原始周K图和带高低点标注图，区分 raw 与 filtered 枢轴，并绘制图例。
+
+    实现方式:
+    - 复用 BaseChartGenerator 的 Wind 风格绘制；根据 pivot_result 中的索引标注三角形
+    - _draw_raw_pivots 使用浅色；_draw_filtered_pivots 使用醒目颜色；内置图例
+
+    优点:
+    - 与 HTML 输出配套，快速定位枢轴位置；视觉清晰
+
+    局限:
+    - 当前未直接在图上标注 meta（prominence/阈值/ATR%），如需可后续叠加文本
+    - 大量点时可能遮挡，需控制点大小或抽样
+
+    维护建议:
+    - 保持 pivot_result 约定键名；如扩展标注，优先新增可选绘制开关
+    """
     
-    def __init__(self, output_dir="pivot_images"):
+    def __init__(self, output_dir="pivot_images", frequency_label: str = "周K线图"):
         # 使用Wind标准的K线图尺寸，更好地展示专业图表
         super().__init__(output_dir=output_dir, width=800, height=600)
+        self.frequency_label = frequency_label
         
     def generate_original_chart(self, code, data, save_path=None):
         """
@@ -417,7 +437,7 @@ class PivotChartGenerator(BaseChartGenerator):
         info_font = self._get_chinese_font(12)
         
         # 主标题
-        title = f"{code} 周K线图"
+        title = f"{code} {self.frequency_label}"
         draw.text((20, 20), title, fill='#2c3e50', font=title_font)
         
         # 添加时间范围和统计信息
@@ -563,7 +583,7 @@ class PivotChartGenerator(BaseChartGenerator):
         info_font = self._get_chinese_font(12)
         
         # 主标题
-        title = f"{code} 高低点分析图"
+        title = f"{code} 高低点分析图（{self.frequency_label}）"
         draw.text((20, 20), title, fill='#2c3e50', font=title_font)
         
         # 分析结果摘要

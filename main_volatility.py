@@ -6,11 +6,9 @@ import argparse
 from datetime import datetime, timedelta
 from src.core.stock_data_processor import StockDataProcessor
 from src.generators.volatility_html_generator import VolatilityHTMLGenerator
-from config.settings import DEFAULT_CSV_PATH
 
 def main():
     parser = argparse.ArgumentParser(description='股票波动率和波幅分析')
-    parser.add_argument('--csv', type=str, default=DEFAULT_CSV_PATH, help='CSV数据文件路径')
     parser.add_argument('--output', type=str, default='output/volatility', help='输出目录')
     parser.add_argument('--stocks', type=str, help='要分析的股票代码，用逗号分隔')
     parser.add_argument('--start-date', type=str, help='开始日期 (YYYY-MM-DD)')
@@ -18,26 +16,30 @@ def main():
     parser.add_argument('--max', type=int, default=10000, help='最多分析多少只股票')
     args = parser.parse_args()
 
-    csv_file_path = args.csv
     output_dir = args.output
     
-    # 检查数据文件是否存在
-    if not os.path.exists(csv_file_path):
-        print(f'数据文件不存在: {csv_file_path}')
-        return
-
-    print(f'开始加载数据: {csv_file_path}')
+    print('开始加载数据: 使用数据库数据源')
     
-    # 处理数据
-    data_processor = StockDataProcessor(csv_file_path)
+    # 处理数据 - 使用数据库数据源
+    from src.core.stock_data_processor import create_stock_data_processor
+    
+    data_processor = create_stock_data_processor(use_database=True)
     if not data_processor.load_data():
-        print('数据加载失败:', csv_file_path)
+        print('数据库连接失败')
         return
     if not data_processor.process_weekly_data():
         print('数据处理失败')
+        # 关闭数据库连接
+        if hasattr(data_processor, 'close_connection'):
+            data_processor.close_connection()
         return
     
     stock_data = data_processor.get_all_data()
+    
+    # 关闭数据库连接
+    if hasattr(data_processor, 'close_connection'):
+        data_processor.close_connection()
+    
     print(f'成功加载 {len(stock_data)} 只股票的数据')
 
     # 确定要分析的股票
