@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 数据库版本的股票数据处理器
-从MySQL数据库读取股票数据并处理为周K线数据
+从 MySQL 读取周/日 K 线数据，并提供统一的装载、缓存、访问接口。
+
+- 使用 SQLAlchemy 管理连接与连接池
+- 周频默认近三年数据；日频按自然日截取最近 N 天
+- 所有对外数据结构保持为 {code: pandas.DataFrame}，索引为日期，列为 open/high/low/close
+- 本地缓存放置于 `cache/`，周频与日频分别分桶；当传入选择集时，按选择集生成独立缓存
+
+注意：仅负责读取与简单处理（类型/索引/缺失值），不做业务分析。
 """
 
 import pandas as pd
@@ -27,24 +34,22 @@ class DatabaseStockDataProcessor:
     数据库股票数据处理器
 
     用途:
-    - 从 MySQL 读取周K线数据，支持选择集 selected_codes；对结果做本地缓存（按选择集分桶）。
+    - 从 MySQL 读取周/日 K 线数据，支持按选择集加载，结果支持本地缓存
 
-    实现方式:
-    - SQLAlchemy 连接（连接池、超时预设）→ 逐代码查询最近三年周K线
-    - 缓存: cache/weekly_data_db.pkl 或带 8 位 md5 后缀的独立缓存
-    - 兼容接口: load_data/process_weekly_data/get_all_data/close_connection
+    实现:
+    - 连接: SQLAlchemy 引擎（预 ping、回收、超时、连接池参数）
+    - 周频: 查询近三年周线，返回 DataFrame（索引为 trade_date）
+    - 日频: 查询最近 N 天（日历天）内的日线
+    - 缓存: `cache/weekly_data_db*.pkl` 与 `cache/daily_data_db_*.pkl`，并写入 cache_info 说明
 
-    优点:
-    - 实时性好；缓存减少重复 IO；选择集加速专题分析（如 ARC Top 200）
-
-    局限:
-    - 依赖数据库可用性；schema 变更需同步 SQL
-    - 周期固定为三年，若需更长需暴露参数
+    约定与返回:
+    - `load_data()` 仅建立连接；`process_weekly_data()`/`process_daily_data_recent()` 填充内存字典
+    - `get_all_data()`/`get_all_daily_data()` 返回内存缓存；键为股票代码，值为 DataFrame
 
     维护建议:
-    - 更新 _get_weekly_data_for_stock 的 SQL 与 CAST 精度与索引
-    - 调整 _is_cache_valid 失效策略；必要时引入增量更新
-    - 严格保持键为股票代码、值为 DataFrame 的返回结构
+    - 如数据库表结构调整，优先更新 `_get_weekly_data_for_stock` 与 `_get_daily_data_for_stock` 中的 SQL 与 CAST 精度
+    - 如需变更缓存策略，集中修改 `_is_cache_valid`/`_save_cache` 及对应日频方法
+    - 请勿更改对外返回字典结构，避免影响上游分析/渲染
     """
     
     def __init__(self, cache_dir="cache", selected_codes=None):
@@ -58,11 +63,10 @@ class DatabaseStockDataProcessor:
         
         # 创建缓存目录
         os.makedirs(self.cache_dir, exist_ok=True)
-        
+
     def _get_cache_file(self):
-        """获取缓存文件路径（针对选择集生成独立缓存）。"""
+        """返回周频缓存文件路径。当存在选择集时，基于选择集内容生成 md5 后缀以实现独立缓存。"""
         if self.selected_codes:
-            # 基于选择集生成简单的哈希后缀，避免过长文件名
             import hashlib
             join_key = ",".join(sorted(self.selected_codes))
             digest = hashlib.md5(join_key.encode("utf-8")).hexdigest()[:8]
@@ -70,7 +74,7 @@ class DatabaseStockDataProcessor:
         return os.path.join(self.cache_dir, "weekly_data_db.pkl")
 
     def _get_daily_cache_file(self, days: int = 90):
-        """获取日线缓存文件路径（按选择集与days分桶）。"""
+        """返回日频缓存文件路径（按选择集与天数分桶）。"""
         if self.selected_codes:
             import hashlib
             join_key = ",".join(sorted(self.selected_codes))
@@ -79,7 +83,7 @@ class DatabaseStockDataProcessor:
         return os.path.join(self.cache_dir, f"daily_data_db_{days}.pkl")
     
     def _get_cache_info_file(self):
-        """获取缓存信息文件路径（针对选择集生成独立缓存信息）。"""
+        """返回周频缓存说明文件路径。"""
         if self.selected_codes:
             import hashlib
             join_key = ",".join(sorted(self.selected_codes))
@@ -88,7 +92,7 @@ class DatabaseStockDataProcessor:
         return os.path.join(self.cache_dir, "cache_info_db.txt")
 
     def _get_daily_cache_info_file(self, days: int = 90):
-        """获取日线缓存信息文件路径。"""
+        """返回日频缓存说明文件路径。"""
         if self.selected_codes:
             import hashlib
             join_key = ",".join(sorted(self.selected_codes))
@@ -97,25 +101,17 @@ class DatabaseStockDataProcessor:
         return os.path.join(self.cache_dir, f"cache_info_daily_db_{days}.txt")
     
     def _is_cache_valid(self, max_age_hours=24):
-        """
-        检查缓存是否有效
-        数据库数据基于时间失效，默认24小时后重新获取
-        """
+        """检查周频缓存是否仍然有效（基于文件 mtime，默认 24 小时）。"""
         cache_file = self._get_cache_file()
         info_file = self._get_cache_info_file()
-        
         if not os.path.exists(cache_file) or not os.path.exists(info_file):
             return False
-        
-        # 检查缓存是否过期
         cache_mtime = os.path.getmtime(cache_file)
         current_time = datetime.now().timestamp()
-        
-        # 如果缓存超过指定小时数则认为过期
         return (current_time - cache_mtime) < max_age_hours * 3600
 
     def _is_daily_cache_valid(self, days: int = 90, max_age_hours: int = 12):
-        """检查日线缓存是否有效（默认12小时失效）。"""
+        """检查日频缓存是否仍然有效（默认 12 小时）。"""
         cache_file = self._get_daily_cache_file(days)
         info_file = self._get_daily_cache_info_file(days)
         if not os.path.exists(cache_file) or not os.path.exists(info_file):
@@ -125,15 +121,11 @@ class DatabaseStockDataProcessor:
         return (current_time - cache_mtime) < max_age_hours * 3600
     
     def _save_cache(self):
-        """保存缓存"""
+        """持久化周频内存数据到缓存文件，并写出说明信息。"""
         cache_file = self._get_cache_file()
         info_file = self._get_cache_info_file()
-        
-        # 保存数据
         with open(cache_file, 'wb') as f:
             pickle.dump(self.weekly_data, f)
-        
-        # 保存缓存信息
         with open(info_file, 'w', encoding='utf-8') as f:
             f.write("生成时间: {}\n".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             f.write("数据源: 数据库\n")
@@ -141,11 +133,10 @@ class DatabaseStockDataProcessor:
             f.write("数据点数: {}\n".format(sum(len(data) for data in self.weekly_data.values())))
             if self.selected_codes:
                 f.write("选择集: {} 只 (独立缓存)\n".format(len(self.selected_codes)))
-        
         print("缓存已保存到: {}".format(cache_file))
 
     def _save_daily_cache(self, days: int = 90):
-        """保存日线缓存。"""
+        """持久化日频内存数据到缓存文件，并写出说明信息。"""
         cache_file = self._get_daily_cache_file(days)
         info_file = self._get_daily_cache_info_file(days)
         with open(cache_file, 'wb') as f:
@@ -160,9 +151,8 @@ class DatabaseStockDataProcessor:
         print("日线缓存已保存到: {}".format(cache_file))
     
     def _load_cache(self):
-        """加载缓存"""
+        """加载周频缓存到内存。"""
         cache_file = self._get_cache_file()
-        
         try:
             with open(cache_file, 'rb') as f:
                 self.weekly_data = pickle.load(f)
@@ -173,7 +163,7 @@ class DatabaseStockDataProcessor:
             return False
 
     def _load_daily_cache(self, days: int = 90):
-        """加载日线缓存。"""
+        """加载日频缓存到内存。"""
         cache_file = self._get_daily_cache_file(days)
         try:
             with open(cache_file, 'rb') as f:
@@ -185,9 +175,8 @@ class DatabaseStockDataProcessor:
             return False
     
     def _create_connection(self):
-        """创建数据库连接"""
+        """创建数据库连接引擎并做一次轻量探活，成功后将引擎保存在实例上。"""
         try:
-            # 创建SQLAlchemy引擎
             connection_string = (
                 f"mysql+pymysql://{self.db_config['username']}:{self.db_config['password']}"
                 f"@{self.db_config['host']}:{self.db_config['port']}"
@@ -200,29 +189,26 @@ class DatabaseStockDataProcessor:
                 pool_recycle=3600,
                 echo=False,
                 # 性能优化参数
-                pool_size=10,          # 连接池大小
-                max_overflow=20,       # 最大溢出连接数
+                pool_size=10,
+                max_overflow=20,
                 connect_args={
-                    "connect_timeout": 60,     # 连接超时
-                    "read_timeout": 300,       # 读取超时
-                    "write_timeout": 300,      # 写入超时
+                    "connect_timeout": 60,
+                    "read_timeout": 300,
+                    "write_timeout": 300,
                     "charset": "utf8mb4"
                 }
             )
-            
-            # 测试连接
+            # 探活
             with self.engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
-            
             print("数据库连接成功")
             return True
-            
         except Exception as e:
             print(f"数据库连接失败: {e}")
             return False
     
     def _get_stock_codes(self):
-        """获取股票代码：若有选择集，则直接使用；否则查询全量。"""
+        """获取股票代码列表。若构造时提供了选择集，则直接返回该集合。"""
         if self.selected_codes:
             print(f"使用选择集股票代码 {len(self.selected_codes)} 个")
             return list(self.selected_codes)
@@ -237,47 +223,34 @@ class DatabaseStockDataProcessor:
             return []
     
     def _get_weekly_data_for_stock(self, stock_code):
-        """获取指定股票的周K线数据"""
+        """返回单只股票的周 K 线 DataFrame。索引为日期，列为 open/high/low/close。"""
         try:
-            # 计算三年前的日期
             three_years_ago = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
-            
-            # 查询SQL
             query = """
             SELECT 
                 trade_date,
                 CAST(open AS DECIMAL(10,2)) as open,
                 CAST(high AS DECIMAL(10,2)) as high,
-                CAST(low AS DECIMAL(10,2)) as low,
+                CAST(low  AS DECIMAL(10,2)) as low,
                 CAST(close AS DECIMAL(10,2)) as close
             FROM history_week_data 
             WHERE code = %s AND trade_date >= %s
             ORDER BY trade_date
             """
-            # 执行查询
             df = pd.read_sql(query, self.engine, params=(stock_code, three_years_ago))
-
-            
             if len(df) == 0:
                 return None
-            
-            # 数据处理
             df['trade_date'] = pd.to_datetime(df['trade_date'])
             df = df.set_index('trade_date')
-            
-            # 数据类型转换
             numeric_cols = ['open', 'high', 'low', 'close']
             df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
-            
-            # 移除空值并返回
             df = df.dropna()
             return df if len(df) > 0 else None
-            
         except Exception:
             return None
 
     def _get_daily_data_for_stock(self, stock_code: str, days: int = 90):
-        """获取指定股票的最近N天日K线数据（默认90天，按日历天筛选）。"""
+        """返回单只股票最近 N 天（日历天）内的日 K 线 DataFrame。"""
         try:
             start_date = (datetime.now() - timedelta(days=days + 30)).strftime('%Y-%m-%d')
             query = """
@@ -285,7 +258,7 @@ class DatabaseStockDataProcessor:
                 trade_date,
                 CAST(open AS DECIMAL(10,2)) as open,
                 CAST(high AS DECIMAL(10,2)) as high,
-                CAST(low AS DECIMAL(10,2)) as low,
+                CAST(low  AS DECIMAL(10,2)) as low,
                 CAST(close AS DECIMAL(10,2)) as close
             FROM history_day_data 
             WHERE code = %s AND trade_date >= %s
@@ -299,7 +272,7 @@ class DatabaseStockDataProcessor:
             numeric_cols = ['open', 'high', 'low', 'close']
             df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
             df = df.dropna()
-            # 只保留最近days个自然日内的交易记录
+            # 只保留最近 days 个自然日内的交易记录
             cutoff = pd.Timestamp(datetime.now() - timedelta(days=days))
             df = df[df.index >= cutoff]
             return df if len(df) > 0 else None
@@ -307,52 +280,37 @@ class DatabaseStockDataProcessor:
             return None
     
     def load_data(self):
-        """
-        兼容性方法，保持与原StockDataProcessor接口一致
-        实际上数据库版本不需要这个方法，但为了兼容性保留
-        """
+        """兼容接口：建立数据库连接。成功返回 True。"""
         return self._create_connection()
     
     def process_weekly_data(self):
-        """处理数据，从数据库获取周K线数据 - 简化版本"""
-        # 首先尝试从缓存加载
+        """加载所有（或选择集）股票的周 K 线数据到内存并缓存。"""
+        # 优先尝试缓存
         if self._is_cache_valid():
             if self._load_cache():
                 return True
-        
-        # 创建数据库连接
+        # 加载
         if not self._create_connection():
             print("无法连接到数据库")
             return False
-        
         print("开始从数据库加载周K线数据...")
-        
         try:
-            # 1. 获取所有股票代码
             stock_codes = self._get_stock_codes()
             if not stock_codes:
                 print("未能获取股票代码列表")
                 return False
-            
             print(f"获取到 {len(stock_codes)} 个股票代码")
-            
-            # 2. 遍历每只股票获取数据
             self._load_all_stock_data(stock_codes)
-            
             print(f"成功处理 {len(self.weekly_data)} 只股票的周K线数据")
-            
-            # 保存缓存
             if self.weekly_data:
                 self._save_cache()
-            
             return True
-            
         except Exception as e:
             print(f"加载数据失败: {e}")
             return False
 
     def process_daily_data_recent(self, days: int = 90):
-        """处理数据，从数据库获取最近N天（日线）数据。"""
+        """加载所有（或选择集）股票最近 N 天的日 K 线数据到内存并缓存。"""
         if self._is_daily_cache_valid(days=days):
             if self._load_daily_cache(days=days):
                 return True
@@ -384,75 +342,59 @@ class DatabaseStockDataProcessor:
             return False
     
     def _load_all_stock_data(self, stock_codes):
-        """遍历所有股票获取周K线数据 - 简化版本"""
+        """按给定列表遍历加载周 K 线数据，填充到 `self.weekly_data`。"""
         successful_count = 0
         total_count = len(stock_codes)
-        
         print(f"开始遍历 {total_count} 只股票...")
-        
         for i, stock_code in enumerate(stock_codes, 1):
-            # 每100只股票显示一次进度
             if i % 100 == 0:
                 print(f"处理进度: {i}/{total_count} ({i/total_count*100:.1f}%)")
-            
-            # 获取单只股票的周K线数据
             weekly_data = self._get_weekly_data_for_stock(stock_code)
             if weekly_data is not None and len(weekly_data) > 0:
                 self.weekly_data[stock_code] = weekly_data
                 successful_count += 1
-        
         print(f"遍历完成，成功处理 {successful_count} 只股票")
     
     def get_stock_codes(self):
-        """获取所有股票代码"""
+        """返回已加载的股票代码列表（来自内存字典键）。"""
         return list(self.weekly_data.keys())
     
     def get_stock_data(self, code):
-        """获取指定股票的周K线数据"""
+        """返回单只股票的周 K 线 DataFrame（若不存在则返回 None）。"""
         return self.weekly_data.get(code)
     
     def get_all_data(self):
-        """获取所有数据"""
+        """返回全部周频数据字典。"""
         return self.weekly_data
 
     def get_all_daily_data(self):
-        """获取所有日线数据"""
+        """返回全部日频数据字典。"""
         return self.daily_data
     
     def close_connection(self):
-        """关闭数据库连接"""
+        """关闭数据库连接引擎（如存在）。"""
         if self.engine:
             self.engine.dispose()
             print("数据库连接已关闭")
 
 
 if __name__ == "__main__":
-    """性能测试"""
+    """简单的性能测试入口：连接→加载→统计用时"""
     import time
     start_time = time.time()
-    
     processor = DatabaseStockDataProcessor()
-    
     print("开始性能测试...")
-    
-    # 测试连接
     if processor.load_data():
         print("数据库连接成功")
-        
-        # 测试数据处理
         if processor.process_weekly_data():
-            
-            # 显示统计信息
             stock_codes = processor.get_stock_codes()
             print(f"✅ 成功加载 {len(stock_codes)} 只股票的数据")
-            
             total_time = time.time() - start_time
             print(f"🚀 总耗时: {total_time:.1f} 秒")
-            print(f"📊 平均每只股票处理时间: {total_time/len(stock_codes)*1000:.2f} 毫秒")
-            
+            if len(stock_codes) > 0:
+                print(f"📊 平均每只股票处理时间: {total_time/len(stock_codes)*1000:.2f} 毫秒")
         else:
             print("❌ 数据处理失败")
     else:
         print("❌ 数据库连接失败")
-    
     processor.close_connection()

@@ -14,40 +14,22 @@ class PatternAnalyzer:
     圆弧底/相似度形态分析器
 
     用途:
-    - 识别战略大弧底与相似度评分，输出阶段、低位区、箱体与趋势等结构化指标。
+    - 识别战略大弧底形态并给出相似度评分，输出阶段/低位区/箱体/趋势等结构化指标
 
-    实现方式:
-    - 基础版使用二次多项式拟合与三阶段划分；增强版可选 TA-Lib 指标作为评分因子
-    - 提供 flexible 评分路径用于“相似但不完全满足”的情形
-
-    优点:
-    - 输出丰富、可视化友好；提供多种细分因子便于解释
-
-    局限:
-    - 参数依赖较强；不同标的/周期需回测微调
+    实现:
+    - 基础路径: 二次多项式拟合 + 三阶段划分（下降/横盘/上涨）
+    - 增强路径: 可选 TA-Lib 指标作为评分因子并生成解释摘要
+    - 相似度路径: 对不完全满足条件的标的给出分解因子评分（低位区、初期高位、下跌、盘整、上升）
 
     维护建议:
-    - 统一在 _calculate_strategic_arc_quality 与 *_flexible 路径集中管理权重
-    - 对外字段名尽量稳定（stages/low_zone_analysis/box_analysis/...）
+    - 统一在 `_calculate_strategic_arc_quality` 与 *_flexible 方法中集中管理权重
+    - 对外字段名尽量稳定（stages/low_zone_analysis/box_analysis/...），避免破坏下游渲染
     """
     def __init__(self):
         self.talib_available = TALIB_AVAILABLE
     
     def detect_major_arc_bottom_enhanced(self, prices, high_prices=None, low_prices=None, volume=None, min_points=30, r2_threshold=0.6):
-        """
-        使用TA-Lib增强的大弧底检测算法
-        
-        Args:
-            prices: 收盘价序列
-            high_prices: 最高价序列（可选，用于支撑阻力分析）
-            low_prices: 最低价序列（可选，用于支撑阻力分析）
-            volume: 成交量序列（可选，用于成交量确认）
-            min_points: 最小数据点数
-            r2_threshold: R²拟合度阈值
-            
-        Returns:
-            dict: 增强的大弧底分析结果
-        """
+        """使用 TA-Lib 增强的大弧底检测算法；无 TA-Lib 时回退到基础方法。"""
         # 如果没有TA-Lib，回退到基本方法
         if not self.talib_available:
             return self.detect_major_arc_bottom(prices, min_points, r2_threshold)

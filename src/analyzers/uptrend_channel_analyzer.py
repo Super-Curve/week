@@ -75,7 +75,7 @@ class UptrendChannelAnalyzer:
         
         # 0. 智能波动率过滤（优化版）
         if volatility_filter:
-            filtered_data = self._apply_intelligent_volatility_filter_enhanced(prices, high_prices, low_prices)
+            filtered_data = self._apply_intelligent_volatility_filter(prices, high_prices, low_prices)
             if filtered_data is None:
                 return None
             
@@ -1106,44 +1106,6 @@ class UptrendChannelAnalyzer:
         else:
             return "观望 - 不符合上升通道特征" 
 
-    def _apply_volatility_filter(self, prices, high_prices, low_prices):
-        """
-        应用波动率智能过滤，去除毛刺和噪声
-        
-        Args:
-            prices: 收盘价序列
-            high_prices: 最高价序列
-            low_prices: 最低价序列
-            
-        Returns:
-            dict: 过滤后的数据和波动率统计
-        """
-        try:
-            # 1. 计算基础波动率指标
-            volatility_stats = self._calculate_volatility_statistics(prices, high_prices, low_prices)
-            
-            # 2. 识别异常波动点
-            outlier_indices = self._identify_volatility_outliers(prices, high_prices, low_prices, volatility_stats)
-            
-            # 3. 智能平滑处理
-            smoothed_data = self._apply_intelligent_smoothing(prices, high_prices, low_prices, outlier_indices, volatility_stats)
-            
-            # 4. 验证过滤效果
-            if not self._validate_filtered_data(smoothed_data, volatility_stats):
-                return None
-            
-            return {
-                'prices': smoothed_data['prices'],
-                'high_prices': smoothed_data['high_prices'],
-                'low_prices': smoothed_data['low_prices'],
-                'volatility_stats': volatility_stats,
-                'filtered_points': len(outlier_indices),
-                'smoothing_method': smoothed_data['method']
-            }
-            
-        except Exception as e:
-            print("波动率过滤失败:", str(e))
-            return None
     
     def _calculate_volatility_statistics(self, prices, high_prices, low_prices):
         """计算波动率统计指标 - 改进版"""
@@ -1309,29 +1271,6 @@ class UptrendChannelAnalyzer:
             'method': 'intelligent_smoothing'
         }
     
-    def _validate_filtered_data(self, smoothed_data, volatility_stats):
-        """验证过滤后的数据质量"""
-        # 1. 检查数据完整性
-        if np.any(np.isnan(smoothed_data['prices'])) or np.any(np.isinf(smoothed_data['prices'])):
-            return False
-        
-        # 2. 检查价格逻辑性
-        for i in range(len(smoothed_data['prices'])):
-            if (smoothed_data['high_prices'][i] < smoothed_data['low_prices'][i] or
-                smoothed_data['prices'][i] > smoothed_data['high_prices'][i] or
-                smoothed_data['prices'][i] < smoothed_data['low_prices'][i]):
-                return False
-        
-        # 3. 检查波动率改善
-        original_vol = volatility_stats['mean_vol']
-        filtered_returns = np.diff(smoothed_data['prices']) / smoothed_data['prices'][:-1]
-        filtered_vol = np.std(filtered_returns)
-        
-        # 波动率应该有所改善
-        if filtered_vol >= original_vol:
-            return False
-        
-        return True
     
     def _apply_intelligent_volatility_filter(self, prices, high_prices, low_prices):
         """
@@ -1362,8 +1301,19 @@ class UptrendChannelAnalyzer:
                     prices, high_prices, low_prices, outlier_indices, volatility_stats, filter_strategy
                 )
                 
-                # 4. 验证过滤效果
-                if not self._validate_filtered_data(smoothed_data, volatility_stats):
+                # 4. 验证过滤效果（简化版）
+                try:
+                    if (np.any(np.isnan(smoothed_data['prices'])) or np.any(np.isinf(smoothed_data['prices']))):
+                        return None
+                    # 基本价格逻辑
+                    if not (len(smoothed_data['high_prices']) == len(smoothed_data['low_prices']) == len(smoothed_data['prices'])):
+                        return None
+                    for i in range(len(smoothed_data['prices'])):
+                        if (smoothed_data['high_prices'][i] < smoothed_data['low_prices'][i] or
+                            smoothed_data['prices'][i] > smoothed_data['high_prices'][i] or
+                            smoothed_data['prices'][i] < smoothed_data['low_prices'][i]):
+                            return None
+                except Exception:
                     return None
                 
                 # 更新波动率统计
