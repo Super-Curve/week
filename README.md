@@ -36,9 +36,14 @@ brew install ta-lib && pip install TA-Lib
 
 # 周频高低点（仅保留 ZigZag+ATR；默认使用 ARC TOP≤200 小集合缓存）
 ./run_in_stock_env.sh pivot --max 200 --sensitivity balanced
+# 全量数据的高低点
+./run_in_stock_env.sh pivot --full-data
+
 
 # 日频高低点（近N天，默认90天；默认使用 ARC TOP≤200 小集合缓存）
 ./run_in_stock_env.sh pivot_day --days 90 --max 200 --sensitivity balanced
+# 全量数据的高低点
+./run_in_stock_env.sh pivot_day --full-data --days 60
 
 # 上升通道（默认使用 ARC TOP≤200）
 ./run_in_stock_env.sh uptrend --max 200
