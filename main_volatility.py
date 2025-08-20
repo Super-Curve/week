@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+波动率/波幅分析入口（周频数据，统一数据库数据源）
+
+说明：
+- 统一从数据库加载周线数据，计算 Historical/Realized/Parkinson/Garman–Klass 等波动率及波幅，
+  并生成可分页的 HTML 报告与配套图片。
+- 输出目录：`output/volatility/`（图片位于 `images/`）。
+"""
 
 import os
 import argparse

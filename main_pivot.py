@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-企业级高低点分析主程序
-融合顶级量化交易技术的智能转折点识别系统
+周频高低点分析主程序（ZigZag+ATR 自适应阈值）
 
-技术特色：
-- 分形维度分析：基于分形几何的转折点识别
-- 统计显著性验证：使用统计学方法验证转折点
-- 机器学习增强：自适应异常检测算法
-- 多时间框架确认：确保不同时间尺度的一致性
-- 市场微观结构：基于成交量和价格行为分析
-- 动态阈值调整：基于市场状态的自适应阈值
+说明：
+- 当前仅保留并使用 `zigzag_atr` 方法进行枢轴识别，基于 ATR% 动态阈值与最小柱间隔，
+  提供低延迟、可解释的高低点结果；结果用于图表与 HTML 报告。
+- 数据源统一为数据库（周线），默认仅处理 ARC TOP≤200 的小集合缓存以提速。
+
+输出：
+- 图片：`output/pivot/images/`
+- HTML：`output/pivot/index.html`
+- JSON：`output/pivot/pivot_analysis_results.json`
 """
 
 import os
@@ -187,7 +188,16 @@ def save_analysis_results(pivot_results, output_dir):
             'filtered_pivot_highs_count': len(result.get('filtered_pivot_highs', [])),
             'filtered_pivot_lows_count': len(result.get('filtered_pivot_lows', [])),
             'filter_effectiveness': result.get('filter_effectiveness', {}),
-            'analysis_description': result.get('analysis_description', {})
+            'analysis_description': result.get('analysis_description', {}),
+            # 新增：优质评估摘要
+            'premium_metrics': {
+                't1': (result.get('premium_metrics', {}) or {}).get('t1'),
+                'p1': (result.get('premium_metrics', {}) or {}).get('p1'),
+                'annualized_volatility_pct': (result.get('premium_metrics', {}) or {}).get('annualized_volatility_pct', 0.0),
+                'sharpe_ratio': (result.get('premium_metrics', {}) or {}).get('sharpe_ratio', 0.0),
+                'is_premium': (result.get('premium_metrics', {}) or {}).get('is_premium', False),
+                'reason': (result.get('premium_metrics', {}) or {}).get('reason', '')
+            }
         }
     
     with open(results_file, 'w', encoding='utf-8') as f:
@@ -309,6 +319,8 @@ def main():
                       help='检测方法（仅保留：zigzag_atr）')
     parser.add_argument('--sensitivity', choices=['conservative', 'balanced', 'aggressive'], 
                       default='balanced', help='检测敏感度')
+    parser.add_argument('--full-data', action='store_true', 
+                      help='使用全部数据库数据进行分析（默认仅使用大弧底TOP200）')
     
     args = parser.parse_args()
     
@@ -329,29 +341,50 @@ def main():
     print("🔬 技术栈: 分形维度 | 统计验证 | 机器学习 | 微观结构")
     print("=" * 70)
     
-    # 1. 加载大弧底分析结果
-    print("\n📊 步骤1: 加载大弧底分析结果")
-    arc_stocks = load_arc_stocks_from_json(args.arc_json)
-    if not arc_stocks:
-        print("无法加载大弧底分析结果，程序退出")
-        return
-    
-    # 2. 加载和处理股票数据（统一数据库数据源）
-    print("\n📈 步骤2: 加载和处理股票数据（数据库）")
-    from src.utils.common_utils import load_and_process_data
-    # 只加载ARC列表（最多200只），和 uptrend 一致
-    all_stock_data = load_and_process_data(use_arc_top=True)
-    if not all_stock_data:
-        print("数据加载失败")
-        return
-    print(f"成功加载 {len(all_stock_data)} 只股票的周K线数据")
-    
-    # 3. 根据大弧底结果过滤股票数据
-    print("\n🔍 步骤3: 过滤大弧底股票数据")
-    filtered_stock_data = filter_stock_data_by_arc_results(all_stock_data, arc_stocks)
-    if not filtered_stock_data:
-        print("没有找到有效的大弧底股票数据，程序退出")
-        return
+    # 根据是否使用全量数据决定加载策略
+    if args.full_data:
+        # 使用全量数据模式
+        print("\n📊 步骤1: 使用全量数据模式（跳过大弧底过滤）")
+        print("⚠️  警告：全量数据分析可能需要较长时间...")
+        
+        # 2. 加载和处理股票数据（统一数据库数据源）
+        print("\n📈 步骤2: 加载和处理全部股票数据（数据库）")
+        from src.utils.common_utils import load_and_process_data
+        # 加载全部数据
+        all_stock_data = load_and_process_data(use_arc_top=False, max_stocks=args.max)
+        if not all_stock_data:
+            print("数据加载失败")
+            return
+        print(f"成功加载 {len(all_stock_data)} 只股票的周K线数据")
+        
+        # 全量模式下不需要过滤，直接使用全部数据
+        print("\n🔍 步骤3: 使用全部股票数据进行分析")
+        filtered_stock_data = all_stock_data
+    else:
+        # 传统模式：仅分析大弧底股票
+        # 1. 加载大弧底分析结果
+        print("\n📊 步骤1: 加载大弧底分析结果")
+        arc_stocks = load_arc_stocks_from_json(args.arc_json)
+        if not arc_stocks:
+            print("无法加载大弧底分析结果，程序退出")
+            return
+        
+        # 2. 加载和处理股票数据（统一数据库数据源）
+        print("\n📈 步骤2: 加载和处理股票数据（数据库）")
+        from src.utils.common_utils import load_and_process_data
+        # 只加载ARC列表（最多200只），和 uptrend 一致
+        all_stock_data = load_and_process_data(use_arc_top=True)
+        if not all_stock_data:
+            print("数据加载失败")
+            return
+        print(f"成功加载 {len(all_stock_data)} 只股票的周K线数据")
+        
+        # 3. 根据大弧底结果过滤股票数据
+        print("\n🔍 步骤3: 过滤大弧底股票数据")
+        filtered_stock_data = filter_stock_data_by_arc_results(all_stock_data, arc_stocks)
+        if not filtered_stock_data:
+            print("没有找到有效的大弧底股票数据，程序退出")
+            return
     
     # 4. 执行企业级高低点分析
     print(f"\n🎯 步骤4: 执行企业级高低点分析")
@@ -386,6 +419,7 @@ def main():
     print(f"📊 分析方法: {args.method}")
     print(f"🎯 敏感度设置: {args.sensitivity}")
     print(f"📈 成功分析股票: {len(pivot_results)} 只")
+    print(f"💾 数据模式: {'全量数据分析' if args.full_data else '大弧底股票分析（TOP200）'}")
     print(f"📁 输出目录: {output_dir}")
     print(f"🌐 HTML页面: {html_path}")
     print(f"🏠 主导航: output/index.html")

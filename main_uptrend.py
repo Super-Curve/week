@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+上升通道分析入口（针对 ARC TOP 小集合优先）
+
+说明：
+- 默认仅加载 ARC TOP≤200 的标的（独立缓存），使用专业上升通道识别或入场信号回退，
+  生成一年期背景的上升通道图表与 HTML 报告。
+- 输出目录：`output/uptrend/`（图片位于 `images/`）。
+"""
 
 import os
 import argparse

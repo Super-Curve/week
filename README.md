@@ -34,8 +34,11 @@ brew install ta-lib && pip install TA-Lib
 # 大弧底（全量扫描，生成 ARC TOP 列表）
 ./run_in_stock_env.sh arc --max 200
 
-# 高低点（仅保留 ZigZag+ATR 方法；默认使用 ARC TOP≤200 小集合缓存）
-./run_in_stock_env.sh pivot --max 200
+# 周频高低点（仅保留 ZigZag+ATR；默认使用 ARC TOP≤200 小集合缓存）
+./run_in_stock_env.sh pivot --max 200 --sensitivity balanced
+
+# 日频高低点（近N天，默认90天；默认使用 ARC TOP≤200 小集合缓存）
+./run_in_stock_env.sh pivot_day --days 90 --max 200 --sensitivity balanced
 
 # 上升通道（默认使用 ARC TOP≤200）
 ./run_in_stock_env.sh uptrend --max 200
@@ -55,13 +58,20 @@ brew install ta-lib && pip install TA-Lib
   - --method zigzag_atr（唯一保留方法）
   - --sensitivity conservative|balanced|aggressive（密度/延迟权衡，推荐 balanced）
 
+- pivot_day 专属：
+  - --days N（默认90）：最近 N 天的日频数据窗口
+  - --sensitivity conservative|balanced|aggressive（与周频一致，内部按日频自动覆盖阈值）
+  - 输出目录：`output/pivot_day/`
+
 ### 🔍 工作流建议
 1) 先运行大弧底模块生成 `output/arc/top_100.json`
 2) 再运行 pivot/uptrend，两者默认只加载 ARC 列表（≤200 只），显著加速并使用独立小缓存
-3) 打开报告：
+3) 按需运行日频高低点 pivot_day（近3个月/90天），用于低延迟的短期结构识别
+4) 打开报告：
    - output/index.html（主导航）
    - output/arc/index.html
    - output/pivot/index.html
+   - output/pivot_day/index.html
    - output/uptrend/uptrend_analysis.html
 
 ### 🧠 高低点识别（ZigZag+ATR）
@@ -98,6 +108,7 @@ week/
 ├── run_in_stock_env.sh          # 统一运行入口（使用 conda 环境）
 ├── main_arc.py                  # 大弧底
 ├── main_pivot.py                # 高低点（ZigZag+ATR）
+├── main_pivot_day.py            # 日频高低点（近N天，默认90天）
 ├── main_uptrend.py              # 上升通道
 ├── main_volatility.py           # 波动率
 ├── main_kline.py                # 周K线图库
@@ -111,5 +122,6 @@ week/
 - 仅保留数据库数据源，彻底移除 CSV 入口
 - 高低点仅保留 `zigzag_atr` 方法；HTML 展示每个枢轴入选依据
 - 统一输出目录至 `output/`；按选择集分桶缓存，提升速度与一致性
+- 新增 `pivot_day`：近 N 天（日频，默认90天）高低点识别，默认仅处理 ARC TOP≤200 小集合并使用独立日线缓存
 
 如需扩展或接入新方法，请参考各类顶部的类注释（用途/实现/优缺点/维护建议）。

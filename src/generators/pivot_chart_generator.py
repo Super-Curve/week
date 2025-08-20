@@ -112,6 +112,9 @@ class PivotChartGenerator(BaseChartGenerator):
         
         # 高亮显示高低点
         self._draw_pivot_points(draw, normalized_data, pivot_result)
+
+        # 标注T1（最低的已识别低点）
+        self._draw_t1_annotation(draw, normalized_data, data, pivot_result)
         
         # 保存图片
         img.save(save_path, quality=95, optimize=True)
@@ -159,7 +162,8 @@ class PivotChartGenerator(BaseChartGenerator):
         # Wind风格：添加更大的边距以确保所有点都在图表区域内
         price_range = global_max - global_min
         margin = max(price_range * 0.1, price_range * 0.05 + 1)  # 至少10%边距
-        display_min = global_min - margin
+        # 优化：Y轴最小不低于0，避免出现负数刻度
+        display_min = max(0, global_min - margin)
         display_max = global_max + margin
         
         # Wind风格的图表区域
@@ -540,12 +544,16 @@ class PivotChartGenerator(BaseChartGenerator):
         else:
             # 多于6个周期，选择关键点
             display_indices = [0]  # 起始点
-            step = (total_periods - 1) // 4  # 中间4个点
+            step = max(1, (total_periods - 1) // 4)
             for i in range(1, 5):
                 idx = i * step
-                if idx < total_periods:
+                # 避免与结束点重叠
+                if idx < total_periods - 1:
                     display_indices.append(idx)
-            display_indices.append(total_periods - 1)  # 结束点
+            # 确保结束点仅添加一次
+            if (total_periods - 1) not in display_indices:
+                display_indices.append(total_periods - 1)
+            display_indices = sorted(set(display_indices))
         
         # 绘制时间标签
         chart_width = chart_right - chart_left
@@ -594,6 +602,22 @@ class PivotChartGenerator(BaseChartGenerator):
             
             summary = f"识别结果: {high_count}个关键高点, {low_count}个关键低点  准确度: {accuracy:.1%}"
             draw.text((20, 50), summary, fill='#e74c3c', font=info_font)
+
+            # 新增：优质评估（基于最低低点以来 R1/R2）
+            premium = pivot_result.get('premium_metrics', {}) or {}
+            is_premium = premium.get('is_premium', False)
+            r1 = premium.get('annualized_volatility_pct', 0.0)
+            r2 = premium.get('sharpe_ratio', 0.0)
+            t1 = premium.get('t1')
+            p1 = premium.get('p1')
+            p1_text = f"{p1:.2f}" if p1 is not None else "-"
+            if is_premium:
+                premium_text = f"优质：是（R1={r1:.1f}%  R2={r2:.2f}；T1={t1 or '-'} P1={p1_text}）"
+                fill_color = '#27ae60'
+            else:
+                premium_text = f"优质：否（R1={r1:.1f}%  R2={r2:.2f}；T1={t1 or '-'} P1={p1_text}）"
+                fill_color = '#7f8c8d'
+            draw.text((20, 68), premium_text, fill=fill_color, font=info_font)
         
         # 图例说明
         legend_text = "🔺红色-关键高点  🔻蓝色-关键低点  ○浅色-过滤点"
@@ -687,6 +711,33 @@ class PivotChartGenerator(BaseChartGenerator):
             
             draw.text((chart_left, chart_bottom + 5), start_text, fill='black', font=font)
             draw.text((chart_right - 50, chart_bottom + 5), end_text, fill='black', font=font)
+
+    def _draw_t1_annotation(self, draw, normalized_data, original_data, pivot_result):
+        """在图上标注T1（识别低点中的最低点）。"""
+        try:
+            filtered_lows = pivot_result.get('filtered_pivot_lows', []) or []
+            if not filtered_lows:
+                return
+            lows = original_data['low'].values
+            valid = [idx for idx in filtered_lows if 0 <= idx < len(lows)]
+            if not valid:
+                return
+            t1_idx = min(valid, key=lambda i: lows[i])
+            dates = normalized_data['dates']
+            low_y = normalized_data['low']
+            if t1_idx >= len(dates) or t1_idx >= len(low_y):
+                return
+            x = int(dates[t1_idx])
+            y = int(low_y[t1_idx])
+            # 画一个高亮圆圈和“T1”标签
+            radius = 8
+            draw.ellipse([(x - radius, y - radius), (x + radius, y + radius)], outline='#f39c12', width=3)
+            font = self._get_chinese_font(12)
+            label = "T1"
+            # 标签稍微偏右上，避免遮挡K线
+            draw.text((x + radius + 3, y - radius - 2), label, fill='#f39c12', font=font)
+        except Exception:
+            return
     
     def generate_charts_batch(self, stock_data_dict, pivot_results_dict, max_charts=None):
         """

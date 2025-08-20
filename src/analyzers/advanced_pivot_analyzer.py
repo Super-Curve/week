@@ -118,9 +118,12 @@ class EnterprisesPivotAnalyzer:
                 pivot_results, technical_suite, quality_metrics, method, sensitivity
             )
             
-            # 6. 标准化输出格式（兼容原有接口）
+            # 6. 计算“优质”评估（基于最低枢轴低点以来的年化波动率与夏普）
+            premium_metrics = self._compute_premium_metrics(data, pivot_results, frequency=frequency)
+
+            # 7. 标准化输出格式（兼容原有接口）
             return self._standardize_output(
-                pivot_results, technical_suite, quality_metrics, analysis_report, method
+                pivot_results, technical_suite, quality_metrics, analysis_report, method, premium_metrics
             )
             
         except Exception as e:
@@ -1299,7 +1302,7 @@ class EnterprisesPivotAnalyzer:
         else:
             return "❌ 信号质量较低，不建议单独使用"
     
-    def _standardize_output(self, pivot_results, technical_suite, quality_metrics, analysis_report, method):
+    def _standardize_output(self, pivot_results, technical_suite, quality_metrics, analysis_report, method, premium_metrics=None):
         """标准化输出格式（兼容原有接口）"""
         return {
             # 核心结果（兼容原接口）
@@ -1328,6 +1331,9 @@ class EnterprisesPivotAnalyzer:
             'technical_suite': technical_suite,
             'enterprise_quality': quality_metrics,
             
+            # 优质评估（新增）
+            'premium_metrics': premium_metrics or {},
+            
             # 过滤效果统计
             'filter_effectiveness': {
                 'highs_filtered': len(pivot_results.get('raw_pivot_highs', [])) - len(pivot_results.get('filtered_pivot_highs', [])),
@@ -1335,6 +1341,96 @@ class EnterprisesPivotAnalyzer:
                 'filter_ratio': self._calculate_filter_ratio(pivot_results)
             }
         }
+
+    def _compute_premium_metrics(self, data, pivot_results, frequency: str = 'weekly'):
+        """从识别的低点中找最低点，计算自该时点至今的年化波动率与夏普比率，并给出“优质”标注。
+
+        返回:
+            dict: {
+                't1': str | None,                  # 最低低点时间（ISO字符串）
+                'p1': float | None,                # 最低低点价格
+                'annualized_volatility_pct': float,# 年化波动率（百分比值，如 45.2 表示45.2%）
+                'sharpe_ratio': float,             # 夏普比率（Rf=0 假设）
+                'is_premium': bool,                # 是否优质
+                'reason': str                      # 说明（含R1/R2）
+            }
+        """
+        try:
+            import numpy as np
+            import pandas as pd
+
+            filtered_lows = pivot_results.get('filtered_pivot_lows', []) or []
+            if len(filtered_lows) == 0 or len(data) < 2:
+                return {
+                    't1': None,
+                    'p1': None,
+                    'annualized_volatility_pct': 0.0,
+                    'sharpe_ratio': 0.0,
+                    'is_premium': False,
+                    'reason': '无有效低点或样本过短'
+                }
+
+            low_prices = data['low'].values
+            valid_idxs = [idx for idx in filtered_lows if 0 <= idx < len(low_prices)]
+            if not valid_idxs:
+                return {
+                    't1': None,
+                    'p1': None,
+                    'annualized_volatility_pct': 0.0,
+                    'sharpe_ratio': 0.0,
+                    'is_premium': False,
+                    'reason': '低点索引无效'
+                }
+
+            # 找到识别低点中的最低点
+            lowest_idx = min(valid_idxs, key=lambda i: low_prices[i])
+            t1_ts = data.index[lowest_idx]
+            try:
+                t1_str = t1_ts.strftime('%Y-%m-%d') if hasattr(t1_ts, 'strftime') else str(t1_ts)
+            except Exception:
+                t1_str = str(t1_ts)
+            p1_val = float(low_prices[lowest_idx])
+
+            # 自T1至最新的周收益率序列
+            close_series = data['close'].iloc[lowest_idx:]
+            if len(close_series) < 2:
+                ann_vol_pct = 0.0
+                sharpe = 0.0
+            else:
+                log_returns = np.diff(np.log(np.maximum(close_series.values, 1e-12)))
+                if len(log_returns) == 0:
+                    ann_vol_pct = 0.0
+                    sharpe = 0.0
+                else:
+                    periods_per_year = 52 if str(frequency).lower() == 'weekly' else (252 if str(frequency).lower() == 'daily' else 52)
+                    mu = float(np.mean(log_returns))
+                    # 使用无偏估计（样本标准差）
+                    sigma = float(np.std(log_returns, ddof=1)) if len(log_returns) > 1 else float(np.std(log_returns))
+                    ann_vol = sigma * np.sqrt(periods_per_year)
+                    ann_vol_pct = float(ann_vol * 100.0)
+                    sharpe = float((mu / sigma) * np.sqrt(periods_per_year)) if sigma > 1e-12 else 0.0
+
+            # 优质判定阈值（年化波动率≥40%，夏普≥0.8）
+            is_premium = (ann_vol_pct >= 40.0 and sharpe >= 0.8)
+            reason = f"年化波动率R1={ann_vol_pct:.1f}%，夏普比率R2={sharpe:.2f}"
+
+            return {
+                't1': t1_str,
+                'p1': p1_val,
+                'annualized_volatility_pct': ann_vol_pct,
+                'sharpe_ratio': sharpe,
+                'is_premium': bool(is_premium),
+                'reason': reason
+            }
+        except Exception as e:
+            return {
+                't1': None,
+                'p1': None,
+                'annualized_volatility_pct': 0.0,
+                'sharpe_ratio': 0.0,
+                'is_premium': False,
+                'reason': f'计算失败: {e}'
+            }
     
     def _calculate_filter_ratio(self, pivot_results):
         """计算过滤比率"""

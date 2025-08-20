@@ -111,18 +111,32 @@ class PivotHTMLGenerator:
                 remaining_scores.sort(key=lambda x: x[1], reverse=True)
                 sorted_codes.extend([code for code, score in remaining_scores])
             
-            print(f"最终排序: 前{len(sorted_codes) - len(remaining_codes)}只按大弧底顺序，后{len(remaining_codes)}只按准确度排序")
-            return sorted_codes
+            # 优先显示优质股票（保持各自组内相对顺序稳定）
+            premium_codes = [c for c in sorted_codes if (pivot_results.get(c, {}).get('premium_metrics', {}) or {}).get('is_premium', False)]
+            non_premium_codes = [c for c in sorted_codes if c not in set(premium_codes)]
+            final_sorted = premium_codes + non_premium_codes
+            print(f"最终排序(优质优先): 优质{len(premium_codes)}只，其余{len(non_premium_codes)}只")
+            return final_sorted
             
         except FileNotFoundError:
             print(f"警告: 未找到大弧底排序文件 {arc_json_path}，将按准确度排序")
-            return self._sort_by_quality_fallback(pivot_results)
+            # 回退排序后同样应用优质优先
+            base_sorted = self._sort_by_quality_fallback(pivot_results)
+            premium_codes = [c for c in base_sorted if (pivot_results.get(c, {}).get('premium_metrics', {}) or {}).get('is_premium', False)]
+            non_premium_codes = [c for c in base_sorted if c not in set(premium_codes)]
+            return premium_codes + non_premium_codes
         except json.JSONDecodeError as e:
             print(f"警告: 大弧底排序文件格式错误 {e}，将按准确度排序")
-            return self._sort_by_quality_fallback(pivot_results)
+            base_sorted = self._sort_by_quality_fallback(pivot_results)
+            premium_codes = [c for c in base_sorted if (pivot_results.get(c, {}).get('premium_metrics', {}) or {}).get('is_premium', False)]
+            non_premium_codes = [c for c in base_sorted if c not in set(premium_codes)]
+            return premium_codes + non_premium_codes
         except Exception as e:
             print(f"警告: 读取大弧底排序文件时出错 {e}，将按准确度排序")
-            return self._sort_by_quality_fallback(pivot_results)
+            base_sorted = self._sort_by_quality_fallback(pivot_results)
+            premium_codes = [c for c in base_sorted if (pivot_results.get(c, {}).get('premium_metrics', {}) or {}).get('is_premium', False)]
+            non_premium_codes = [c for c in base_sorted if c not in set(premium_codes)]
+            return premium_codes + non_premium_codes
     
     def _sort_by_quality_fallback(self, pivot_results):
         """备用的按质量评分排序方法"""
@@ -235,7 +249,7 @@ class PivotHTMLGenerator:
                 <div class="analysis-column">
                     <div class="column-title">
                         <h3>📈 分析说明</h3>
-                        <p>准确度、波动率、过滤效果</p>
+                        <p>准确度、优质评估（R1/R2）</p>
                     </div>
                     <div class="analysis-content">
                         {self._generate_detailed_analysis_summary(pivot_result)}
@@ -249,43 +263,19 @@ class PivotHTMLGenerator:
         """生成详细分析摘要"""
         
         analysis_desc = pivot_result.get('analysis_description', {})
-        volatility_metrics = pivot_result.get('volatility_metrics', {})
-        filter_effectiveness = pivot_result.get('filter_effectiveness', {})
+        premium = pivot_result.get('premium_metrics', {}) or {}
         accuracy_score = pivot_result.get('accuracy_score', 0)
 
-        # 读取统计显著性元信息（避免未定义变量）
-        meta = pivot_result.get('pivot_meta', {}) or {}
-        pivot_meta_highs = meta.get('pivot_meta_highs', {})
-        pivot_meta_lows = meta.get('pivot_meta_lows', {})
-        
         # 高低点统计
         filtered_highs = len(pivot_result.get('filtered_pivot_highs', []))
         filtered_lows = len(pivot_result.get('filtered_pivot_lows', []))
-        raw_highs = len(pivot_result.get('raw_pivot_highs', []))
-        raw_lows = len(pivot_result.get('raw_pivot_lows', []))
-        
-        # 获取新的详细波动率分析
-        volatility_analysis = analysis_desc.get('volatility_analysis', '')
-        
-        # 如果有新的详细分析，使用它；否则回退到旧的简单显示
-        if volatility_analysis and len(volatility_analysis.strip()) > 20:
-            # 有详细分析，使用新格式
-            # 将波动率分析文本转换为HTML格式
-            volatility_html = self._format_volatility_analysis_to_html(volatility_analysis)
-        else:
-            # 回退到旧的简单格式
-            avg_volatility = np.nanmean(volatility_metrics.get('atr_percentage', [0])) if 'atr_percentage' in volatility_metrics else 0
-            volatility_threshold = volatility_metrics.get('volatility_threshold', 0)
-            volatility_html = f'''
-                <div class="metric-row">
-                    <span class="metric-label">平均ATR波动率:</span>
-                    <span class="metric-value">{avg_volatility:.2f}%</span>
-                </div>
-                <div class="metric-row">
-                    <span class="metric-label">过滤阈值:</span>
-                    <span class="metric-value">{volatility_threshold:.2f}%</span>
-                </div>
-            '''
+        t1 = premium.get('t1')
+        p1 = premium.get('p1')
+        r1 = premium.get('annualized_volatility_pct', 0.0)
+        r2 = premium.get('sharpe_ratio', 0.0)
+        is_premium = premium.get('is_premium', False)
+        reason = premium.get('reason', '')
+        p1_text = f"{p1:.2f}" if p1 is not None else "-"
         
         return f'''
         <div class="analysis-metrics">
@@ -306,34 +296,28 @@ class PivotHTMLGenerator:
             </div>
             
             <div class="metric-group">
-                <h4>📊 波动率分析</h4>
-                {volatility_html}
-            </div>
-            
-            <div class="metric-group">
-                <h4>🔍 过滤效果</h4>
+                <h4>🏅 优质评估</h4>
                 <div class="metric-row">
-                    <span class="metric-label">原始高点:</span>
-                    <span class="metric-value text-muted">{raw_highs} 个</span>
+                    <span class="metric-label">是否优质:</span>
+                    <span class="metric-value" style="color:{'#27ae60' if is_premium else '#7f8c8d'};">{'是' if is_premium else '否'}</span>
                 </div>
                 <div class="metric-row">
-                    <span class="metric-label">原始低点:</span>
-                    <span class="metric-value text-muted">{raw_lows} 个</span>
+                    <span class="metric-label">最低低点时间 T1:</span>
+                    <span class="metric-value">{t1 or '-'}</span>
                 </div>
                 <div class="metric-row">
-                    <span class="metric-label">过滤率:</span>
-                    <span class="metric-value">{filter_effectiveness.get('filter_ratio', 0):.1%}</span>
+                    <span class="metric-label">最低价格 P1:</span>
+                    <span class="metric-value">{p1_text}</span>
                 </div>
-            </div>
-
-            <div class="metric-group">
-                <h4>🧠 枢轴入选依据</h4>
-                <div class="analysis-text">
-                    <div><strong>高点</strong>（最多显示前5个）：</div>
-                    {self._format_pivot_meta_preview(pivot_meta_highs, is_high=True)}
-                    <div style="margin-top:8px;"><strong>低点</strong>（最多显示前5个）：</div>
-                    {self._format_pivot_meta_preview(pivot_meta_lows, is_high=False)}
+                <div class="metric-row">
+                    <span class="metric-label">年化波动率 R1:</span>
+                    <span class="metric-value">{r1:.1f}%</span>
                 </div>
+                <div class="metric-row">
+                    <span class="metric-label">夏普比率 R2:</span>
+                    <span class="metric-value">{r2:.2f}</span>
+                </div>
+                <div class="analysis-text" style="margin-top:6px;">{reason}</div>
             </div>
             
             <div class="metric-group">

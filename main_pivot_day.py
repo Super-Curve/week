@@ -57,13 +57,22 @@ def main():
     parser.add_argument('--days', type=int, default=90, help='最近N天')
     parser.add_argument('--sensitivity', choices=['conservative', 'balanced', 'aggressive'], default='balanced')
     parser.add_argument('--clear-cache', action='store_true', help='清除缓存，重新处理数据')
+    parser.add_argument('--full-data', action='store_true', 
+                        help='使用全部数据库数据进行分析（默认仅使用大弧底TOP200）')
     args = parser.parse_args()
 
     setup_output_directories(args.output)
     clear_cache_if_needed(args.clear_cache)
 
-    # 加载最近 N 天日线（默认 ARC TOP 小集合缓存）
-    daily_data = load_recent_daily_data(max_stocks=args.max, days=args.days, use_arc_top=True)
+    # 加载最近 N 天日线
+    if args.full_data:
+        print(f"使用全量数据模式，加载最近 {args.days} 天的所有股票日线数据...")
+        print("⚠️  警告：全量数据分析可能需要较长时间...")
+        daily_data = load_recent_daily_data(max_stocks=args.max, days=args.days, use_arc_top=False)
+    else:
+        print(f"使用大弧底股票模式（TOP200），加载最近 {args.days} 天的日线数据...")
+        daily_data = load_recent_daily_data(max_stocks=args.max, days=args.days, use_arc_top=True)
+    
     if not daily_data:
         print('未加载到日线数据')
         return
@@ -80,7 +89,9 @@ def main():
         print('HTML 生成失败')
         return
 
-    print(f'日频高低点分析完成，HTML: {html_path}')
+    print(f'日频高低点分析完成')
+    print(f'数据模式: {"全量数据分析" if args.full_data else "大弧底股票分析（TOP200）"}')
+    print(f'分析结果: {html_path}')
 
     # 生成/更新首页
     try:

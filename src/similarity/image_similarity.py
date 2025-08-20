@@ -2,6 +2,16 @@ import os
 from PIL import Image
 import imagehash
 
+"""
+K线图片相似度计算（pHash）
+
+用途:
+- 使用感知哈希（pHash）在周K线图片上做粗粒度相似度检索，返回相似列表供人工浏览。
+
+注意:
+- 这是基于图片的近似检索，非价格时序相似；更多结构相似请使用形态/通道模块。
+"""
+
 def find_similar_stocks(target_code, kline_img_dir, top_n=10):
     """
     计算目标股票K线图与所有股票K线图的相似度，返回最相似的top_n只股票。

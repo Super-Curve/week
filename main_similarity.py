@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+K线图像相似度入口（pHash）
+
+说明：
+- 使用 `output/kline_images/` 下的周K线图片，通过 pHash 计算与目标股票的相似度，输出最相似列表与简单 HTML 报告。
+- 若图库图片数量不足，会自动触发生成流程（数据库周线 -> 图片）。
+"""
 
 import os
 import sys

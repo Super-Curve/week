@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+大弧底分析入口
+
+说明：
+- 从数据库加载（全量，不限制 ARC 集合）周线数据，优先进行“战略大弧底”严格检测；
+  若严格匹配不足，则回退采用相似度（形态拟合）TOP 列表（默认最多200）。
+- 输出图片：`output/arc/images/`；报告：`output/arc/index.html`；并生成 `output/arc/top_100.json` 供下游使用。
+"""
 
 import os
 import argparse

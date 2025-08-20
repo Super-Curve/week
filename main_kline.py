@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+批量周K线图库入口（仅数据库数据源）
+
+说明：
+- 从数据库加载最近三年周线数据，批量生成周K线图片并输出静态 HTML 图库。
+- 输出图片目录：`output/kline_images/`，页面目录：`output/kline/`。
+"""
 
 import os
 import argparse

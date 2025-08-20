@@ -54,7 +54,9 @@ case $ANALYSIS_TYPE in
         echo "使用方法: $0 [分析类型] [参数]"
         echo "示例: $0 arc --max 100"
         echo "示例: $0 pivot --max 20"
+        echo "示例: $0 pivot --full-data --max 50  # 使用全量数据"
         echo "示例: $0 pivot_day --days 90 --max 50"
+        echo "示例: $0 pivot_day --full-data --days 60  # 使用全量数据"
         echo "示例: $0 all --clear-cache"
         exit 1
         ;;
