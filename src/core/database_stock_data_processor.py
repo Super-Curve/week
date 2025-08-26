@@ -51,6 +51,8 @@ class DatabaseStockDataProcessor:
         self.cache_dir = cache_dir
         self.weekly_data = {}
         self.daily_data = {}
+        self.stock_names = {}  # 存储股票名称映射
+        self.stock_info = {}  # 存储完整的股票信息（名称、市值、上市日期等）
         self.db_config = DATABASE_CONFIG
         self.engine = None
         # 可选：仅加载指定股票代码，减少数据库与内存负担
@@ -129,9 +131,13 @@ class DatabaseStockDataProcessor:
         cache_file = self._get_cache_file()
         info_file = self._get_cache_info_file()
         
-        # 保存数据
+        # 保存数据和股票名称
+        cache_data = {
+            'weekly_data': self.weekly_data,
+            'stock_names': self.stock_names
+        }
         with open(cache_file, 'wb') as f:
-            pickle.dump(self.weekly_data, f)
+            pickle.dump(cache_data, f)
         
         # 保存缓存信息
         with open(info_file, 'w', encoding='utf-8') as f:
@@ -165,8 +171,20 @@ class DatabaseStockDataProcessor:
         
         try:
             with open(cache_file, 'rb') as f:
-                self.weekly_data = pickle.load(f)
-            print("从缓存加载数据: {} 只股票".format(len(self.weekly_data)))
+                cache_data = pickle.load(f)
+            
+            # 处理旧版本缓存（只有weekly_data）
+            if isinstance(cache_data, dict) and 'weekly_data' in cache_data:
+                self.weekly_data = cache_data['weekly_data']
+                self.stock_names = cache_data.get('stock_names', {})
+                print("从缓存加载数据: {} 只股票".format(len(self.weekly_data)))
+                if self.stock_names:
+                    print("同时加载了 {} 个股票名称".format(len(self.stock_names)))
+            else:
+                # 旧格式缓存，只有股票数据
+                self.weekly_data = cache_data
+                self.stock_names = {}  # 没有股票名称
+                print("从缓存加载数据: {} 只股票（旧格式）".format(len(self.weekly_data)))
             return True
         except Exception as e:
             print("加载缓存失败: {}".format(e))
@@ -199,13 +217,14 @@ class DatabaseStockDataProcessor:
                 pool_pre_ping=True,
                 pool_recycle=3600,
                 echo=False,
-                # 性能优化参数
-                pool_size=10,          # 连接池大小
-                max_overflow=20,       # 最大溢出连接数
+                # 性能优化参数（提升连接池容量）
+                pool_size=20,          # 增加连接池大小
+                max_overflow=40,       # 增加最大溢出连接数
+                pool_timeout=30,       # 连接池超时时间
                 connect_args={
-                    "connect_timeout": 60,     # 连接超时
-                    "read_timeout": 300,       # 读取超时
-                    "write_timeout": 300,      # 写入超时
+                    "connect_timeout": 30,     # 减少连接超时
+                    "read_timeout": 120,       # 减少读取超时
+                    "write_timeout": 120,      # 减少写入超时
                     "charset": "utf8mb4"
                 }
             )
@@ -227,7 +246,7 @@ class DatabaseStockDataProcessor:
             print(f"使用选择集股票代码 {len(self.selected_codes)} 个")
             return list(self.selected_codes)
         try:
-            query = "SELECT stock_code FROM stock_name ORDER BY stock_code"
+            query = "SELECT stock_code FROM stock_info ORDER BY stock_code"
             df = pd.read_sql(query, self.engine)
             stock_codes = df['stock_code'].tolist()
             print(f"获取到 {len(stock_codes)} 个股票代码")
@@ -236,8 +255,115 @@ class DatabaseStockDataProcessor:
             print(f"获取股票代码失败: {e}")
             return []
     
+    def _get_weekly_data_batch(self, stock_codes, batch_size=50):
+        """批量获取多只股票的周K线数据和股票名称"""
+        all_data = {}
+        stock_names = {}  # 存储股票名称
+        three_years_ago = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
+        
+        # 批量获取股票完整信息（名称、市值、上市日期）
+        if stock_codes:
+            name_placeholders = ','.join(['%s'] * len(stock_codes))
+            name_query = f"""
+            SELECT stock_code, stock_name, total_market_value, ipo_date
+            FROM stock_info 
+            WHERE stock_code IN ({name_placeholders})
+            """
+            try:
+                info_df = pd.read_sql(name_query, self.engine, params=tuple(stock_codes))
+                # 保存股票名称映射
+                stock_names = dict(zip(info_df['stock_code'], info_df['stock_name']))
+                # 保存完整的股票信息
+                for _, row in info_df.iterrows():
+                    code = row['stock_code']
+                    self.stock_info[code] = {
+                        'name': row['stock_name'],
+                        'total_market_value': row['total_market_value'],
+                        'ipo_date': row['ipo_date']
+                    }
+                print(f"成功获取 {len(stock_names)} 个股票的完整信息")
+            except Exception as e:
+                print(f"获取股票信息失败: {e}")
+        
+        for i in range(0, len(stock_codes), batch_size):
+            batch = stock_codes[i:i+batch_size]
+            placeholders = ','.join(['%s'] * len(batch))
+            
+            # 批量查询SQL
+            query = f"""
+            SELECT 
+                code,
+                trade_date,
+                CAST(open AS DECIMAL(10,2)) as open,
+                CAST(high AS DECIMAL(10,2)) as high,
+                CAST(low AS DECIMAL(10,2)) as low,
+                CAST(close AS DECIMAL(10,2)) as close
+            FROM history_week_data
+            WHERE code IN ({placeholders}) AND trade_date >= %s
+            ORDER BY code, trade_date
+            """
+            
+            # 执行批量查询
+            params = tuple(list(batch) + [three_years_ago])
+            df = pd.read_sql(query, self.engine, params=params)
+            
+            if len(df) > 0:
+                # 按股票代码分组
+                for code, group in df.groupby('code'):
+                    # 处理K线数据
+                    group['trade_date'] = pd.to_datetime(group['trade_date'])
+                    group = group.set_index('trade_date')
+                    numeric_cols = ['open', 'high', 'low', 'close']
+                    group[numeric_cols] = group[numeric_cols].apply(pd.to_numeric, errors='coerce')
+                    group = group.dropna()
+                    if len(group) > 0:
+                        all_data[code] = group
+                        
+        # 将股票名称保存到实例变量
+        self.stock_names = stock_names
+        return all_data
+    
+    def get_loaded_stock_names(self):
+        """获取已加载的股票名称映射"""
+        return self.stock_names
+    
+    def get_loaded_stock_info(self):
+        """获取已加载的完整股票信息"""
+        return self.stock_info
+    
+    def load_stock_names(self):
+        """单独加载股票名称映射（为了向后兼容）"""
+        # 如果已经有数据，直接返回
+        if self.stock_names:
+            return self.stock_names
+            
+        try:
+            # 确保数据库连接
+            if not self.engine:
+                if not self._create_connection():
+                    print("无法建立数据库连接")
+                    return {}
+            
+            query = "SELECT stock_code, stock_name, total_market_value, ipo_date FROM stock_info"
+            df = pd.read_sql(query, self.engine)
+            # 保存股票名称映射
+            self.stock_names = dict(zip(df['stock_code'], df['stock_name']))
+            # 保存完整的股票信息
+            for _, row in df.iterrows():
+                code = row['stock_code']
+                self.stock_info[code] = {
+                    'name': row['stock_name'],
+                    'total_market_value': row['total_market_value'],
+                    'ipo_date': row['ipo_date']
+                }
+            print(f"成功加载 {len(self.stock_names)} 个股票的完整信息")
+            return self.stock_names
+        except Exception as e:
+            print(f"加载股票名称失败: {e}")
+            return {}
+    
     def _get_weekly_data_for_stock(self, stock_code):
-        """获取指定股票的周K线数据"""
+        """获取指定股票的周K线数据（保留用于兼容）"""
         try:
             # 计算三年前的日期
             three_years_ago = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
@@ -384,32 +510,23 @@ class DatabaseStockDataProcessor:
             return False
     
     def _load_all_stock_data(self, stock_codes):
-        """遍历所有股票获取周K线数据 - 简化版本"""
-        successful_count = 0
+        """批量获取所有股票的周K线数据 - 优化版本"""
         total_count = len(stock_codes)
         
-        print(f"开始遍历 {total_count} 只股票...")
+        print(f"开始批量加载 {total_count} 只股票...")
         
-        for i, stock_code in enumerate(stock_codes, 1):
-            # 每100只股票显示一次进度
-            if i % 100 == 0:
-                print(f"处理进度: {i}/{total_count} ({i/total_count*100:.1f}%)")
-            
-            # 获取单只股票的周K线数据
-            weekly_data = self._get_weekly_data_for_stock(stock_code)
-            if weekly_data is not None and len(weekly_data) > 0:
-                self.weekly_data[stock_code] = weekly_data
-                successful_count += 1
+        # 使用批量查询
+        batch_data = self._get_weekly_data_batch(stock_codes, batch_size=50)
         
-        print(f"遍历完成，成功处理 {successful_count} 只股票")
+        # 更新到实例变量
+        self.weekly_data.update(batch_data)
+        
+        successful_count = len(batch_data)
+        print(f"批量加载完成，成功处理 {successful_count} 只股票")
     
     def get_stock_codes(self):
-        """获取所有股票代码"""
+        """获取所有股票代码 - 保留此方法供调试使用"""
         return list(self.weekly_data.keys())
-    
-    def get_stock_data(self, code):
-        """获取指定股票的周K线数据"""
-        return self.weekly_data.get(code)
     
     def get_all_data(self):
         """获取所有数据"""
@@ -426,33 +543,4 @@ class DatabaseStockDataProcessor:
             print("数据库连接已关闭")
 
 
-if __name__ == "__main__":
-    """性能测试"""
-    import time
-    start_time = time.time()
-    
-    processor = DatabaseStockDataProcessor()
-    
-    print("开始性能测试...")
-    
-    # 测试连接
-    if processor.load_data():
-        print("数据库连接成功")
-        
-        # 测试数据处理
-        if processor.process_weekly_data():
-            
-            # 显示统计信息
-            stock_codes = processor.get_stock_codes()
-            print(f"✅ 成功加载 {len(stock_codes)} 只股票的数据")
-            
-            total_time = time.time() - start_time
-            print(f"🚀 总耗时: {total_time:.1f} 秒")
-            print(f"📊 平均每只股票处理时间: {total_time/len(stock_codes)*1000:.2f} 毫秒")
-            
-        else:
-            print("❌ 数据处理失败")
-    else:
-        print("❌ 数据库连接失败")
-    
-    processor.close_connection()
+# 文件结束 - 已删除测试代码

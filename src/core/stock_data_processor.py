@@ -6,6 +6,13 @@ from .database_stock_data_processor import DatabaseStockDataProcessor
 StockDataProcessor = DatabaseStockDataProcessor
 
 
-def create_stock_data_processor(use_database=True, csv_file_path=None, cache_dir="cache"):
-    """创建股票数据处理器（始终返回数据库处理器）。"""
+def create_stock_data_processor(cache_dir="cache"):
+    """创建股票数据处理器（始终返回数据库处理器）。
+    
+    Args:
+        cache_dir: 缓存目录路径
+        
+    Returns:
+        DatabaseStockDataProcessor 实例
+    """
     return DatabaseStockDataProcessor(cache_dir=cache_dir)

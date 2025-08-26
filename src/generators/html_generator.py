@@ -34,7 +34,7 @@ class StaticHTMLGenerator:
         
         # 初始化数据处理器 - 使用数据库
         from src.core.stock_data_processor import create_stock_data_processor
-        self.stock_processor = create_stock_data_processor(use_database=True)
+        self.stock_processor = create_stock_data_processor()
         
         # 加载和处理数据
         if not self.stock_processor.load_data():

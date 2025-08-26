@@ -709,8 +709,12 @@ class PivotChartGenerator(BaseChartGenerator):
             start_text = date_info['start_date'].strftime("%Y-%m")
             end_text = date_info['end_date'].strftime("%Y-%m")
             
+            # 计算结束文本的宽度，避免重叠
+            end_bbox = draw.textbbox((0, 0), end_text, font=font)
+            end_width = end_bbox[2] - end_bbox[0]
+            
             draw.text((chart_left, chart_bottom + 5), start_text, fill='black', font=font)
-            draw.text((chart_right - 50, chart_bottom + 5), end_text, fill='black', font=font)
+            draw.text((chart_right - end_width - 10, chart_bottom + 5), end_text, fill='black', font=font)
 
     def _draw_t1_annotation(self, draw, normalized_data, original_data, pivot_result):
         """在图上标注T1（识别低点中的最低点）。"""

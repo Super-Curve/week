@@ -39,7 +39,6 @@ brew install ta-lib && pip install TA-Lib
 # 全量数据的高低点
 ./run_in_stock_env.sh pivot --full-data
 
-
 # 日频高低点（近N天，默认90天；默认使用 ARC TOP≤200 小集合缓存）
 ./run_in_stock_env.sh pivot_day --days 90 --max 200 --sensitivity balanced
 # 全量数据的高低点
@@ -50,6 +49,12 @@ brew install ta-lib && pip install TA-Lib
 
 # 波动率分析（可指定股票或数量）
 ./run_in_stock_env.sh volatility --max 200
+
+# 🆕 中长期策略标的池（年化波动率40%-50%，夏普比≥0.5）
+./run_in_stock_env.sh long_term --max 200
+
+# 🆕 短期波段策略（基于日线数据：半年化波动率≥50%，夏普比>1）
+./run_in_stock_env.sh short_term --max 200
 
 # 批量周K线图库
 ./run_in_stock_env.sh kline --max 200
@@ -78,6 +83,8 @@ brew install ta-lib && pip install TA-Lib
    - output/pivot/index.html
    - output/pivot_day/index.html
    - output/uptrend/uptrend_analysis.html
+   - output/long_term/index.html
+   - output/short_term/index.html
 
 ### 🧠 高低点识别（ZigZag+ATR）
 - 思路：自适应阈值 = max(基础摆动%, ATR%×系数)，时间顺序构建 ZigZag，最小K线间隔与“同向更极端替换”降噪
@@ -128,5 +135,8 @@ week/
 - 高低点仅保留 `zigzag_atr` 方法；HTML 展示每个枢轴入选依据
 - 统一输出目录至 `output/`；按选择集分桶缓存，提升速度与一致性
 - 新增 `pivot_day`：近 N 天（日频，默认90天）高低点识别，默认仅处理 ARC TOP≤200 小集合并使用独立日线缓存
+- 🆕 新增 `long_term`：中长期策略标的池（年化波动率40%-50%，夏普比≥0.5）
+- 🆕 新增 `short_term`：短期波段策略（半年化波动率≥50%，夏普比>1）
+- 策略筛选自动过滤ST股票、U股（北交所）和上市不足一年的股票
 
 如需扩展或接入新方法，请参考各类顶部的类注释（用途/实现/优缺点/维护建议）。

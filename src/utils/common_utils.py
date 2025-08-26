@@ -6,19 +6,24 @@ import shutil
 import json
 import numpy as np
 import re
+from src.utils.logger import get_logger, log_performance
+
+# 设置日志器
+logger = get_logger(__name__)
 
 
 def setup_output_directories(output_dir):
     """创建输出目录结构"""
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'images'), exist_ok=True)
+    logger.info(f"输出目录已准备: {output_dir}")
 
 
 def clear_cache_if_needed(clear_cache, cache_dir="cache"):
     """清除缓存目录"""
     if clear_cache and os.path.exists(cache_dir):
         shutil.rmtree(cache_dir)
-        print("缓存已清除")
+        logger.info("缓存已清除")
 
 
 def save_json_with_numpy_support(data, file_path):
@@ -47,7 +52,7 @@ def generate_similarity_chart(chart_generator, code, df, similarity_result):
             r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
             r2 = float(max(0, min(1, r2)))
         except Exception as e:
-            print(f"拟合计算失败 {code}: {e}")
+            logger.error(f"拟合计算失败 {code}: {e}")
             coeffs = [0, np.mean(prices)]
             r2 = 0.0
         
@@ -104,18 +109,26 @@ def generate_similarity_chart(chart_generator, code, df, similarity_result):
             return None
             
     except Exception as e:
-        print(f"生成相似度图表失败 {code}: {e}")
+        logger.error(f"生成相似度图表失败 {code}: {e}")
         return None
 
 
-def load_and_process_data(max_stocks=None, use_arc_top=True, arc_json_path="output/arc/top_100.json"):
+@log_performance(logger)
+def load_and_process_data(max_stocks=None, use_arc_top=True, arc_json_path="output/arc/top_100.json", return_with_names=False, return_with_info=False):
     """通用的数据加载和处理函数 - 数据库数据源（唯一支持）。
 
     优化：若 use_arc_top=True，优先仅加载大弧底TOP列表（最多200只），使用独立缓存，避免污染全量缓存。
+    
+    Args:
+        max_stocks: 最大股票数量
+        use_arc_top: 是否使用ARC TOP列表
+        arc_json_path: ARC列表路径
+        return_with_names: 是否返回股票名称
+        return_with_info: 是否返回完整股票信息（包括市值、上市日期等）
     """
     from src.core.stock_data_processor import create_stock_data_processor, StockDataProcessor
     
-    print("使用数据库作为数据源加载股票数据...")
+    logger.info("使用数据库作为数据源加载股票数据...")
 
     selected_codes = None
     if use_arc_top:
@@ -123,29 +136,43 @@ def load_and_process_data(max_stocks=None, use_arc_top=True, arc_json_path="outp
         if codes:
             # 仅取前200只
             selected_codes = codes[:200]
-            print(f"按ARC列表限制加载 {len(selected_codes)} 只股票（独立缓存）")
+            logger.info(f"按ARC列表限制加载 {len(selected_codes)} 只股票（独立缓存）")
 
     # 如果底层支持选择集，则传递
     if selected_codes and hasattr(StockDataProcessor, '__init__'):
         try:
             data_processor = StockDataProcessor(cache_dir="cache", selected_codes=selected_codes)  # DatabaseStockDataProcessor 接口
         except TypeError:
-            data_processor = create_stock_data_processor(use_database=True)
+            data_processor = create_stock_data_processor()
     else:
-        data_processor = create_stock_data_processor(use_database=True)
+        data_processor = create_stock_data_processor()
     
     if not data_processor.load_data():
-        print('数据库连接失败')
+        logger.error('数据库连接失败')
         return None
         
     if not data_processor.process_weekly_data():
-        print('数据处理失败')
+        logger.error('数据处理失败')
         # 关闭数据库连接
         if hasattr(data_processor, 'close_connection'):
             data_processor.close_connection()
         return None
         
     stock_data = data_processor.get_all_data()
+    
+    # 获取股票名称
+    stock_names = None
+    if hasattr(data_processor, 'get_loaded_stock_names'):
+        stock_names = data_processor.get_loaded_stock_names()
+        if stock_names:
+            logger.info(f"同时加载了 {len(stock_names)} 个股票名称")
+    
+    # 获取完整股票信息
+    stock_info = None
+    if hasattr(data_processor, 'get_loaded_stock_info'):
+        stock_info = data_processor.get_loaded_stock_info()
+        if stock_info:
+            logger.info(f"同时加载了 {len(stock_info)} 个股票的完整信息")
     
     # 关闭数据库连接
     if hasattr(data_processor, 'close_connection'):
@@ -154,7 +181,13 @@ def load_and_process_data(max_stocks=None, use_arc_top=True, arc_json_path="outp
     if max_stocks and stock_data:
         stock_data = dict(list(stock_data.items())[:max_stocks])
     
-    print(f"成功加载 {len(stock_data)} 只股票的数据")
+    logger.info(f"成功加载 {len(stock_data)} 只股票的数据")
+    
+    # 返回股票数据和股票名称/信息
+    if return_with_info and stock_info is not None:
+        return stock_data, stock_info
+    elif return_with_names:
+        return stock_data, stock_names
     return stock_data
 
 
@@ -206,14 +239,14 @@ def load_recent_daily_data(max_stocks=None, days: int = 90, use_arc_top: bool = 
     """
     from src.core.stock_data_processor import StockDataProcessor
 
-    print(f"使用数据库作为数据源加载最近{days}天的日线数据...")
+    logger.info(f"使用数据库作为数据源加载最近{days}天的日线数据...")
 
     selected_codes = None
     if use_arc_top:
         codes = load_arc_stock_codes(arc_json_path=arc_json_path)
         if codes:
             selected_codes = codes[:200]
-            print(f"按ARC列表限制加载 {len(selected_codes)} 只股票（日线，独立缓存）")
+            logger.info(f"按ARC列表限制加载 {len(selected_codes)} 只股票（日线，独立缓存）")
 
     # 如果底层支持选择集，则传递
     try:
@@ -221,18 +254,18 @@ def load_recent_daily_data(max_stocks=None, days: int = 90, use_arc_top: bool = 
     except TypeError:
         # 兼容创建方式
         from src.core.stock_data_processor import create_stock_data_processor
-        data_processor = create_stock_data_processor(use_database=True)
+        data_processor = create_stock_data_processor()
 
     if not data_processor.load_data():
-        print('数据库连接失败')
+        logger.error('数据库连接失败')
         return None
 
     if not hasattr(data_processor, 'process_daily_data_recent'):
-        print('底层数据处理器未实现日线加载方法')
+        logger.error('底层数据处理器未实现日线加载方法')
         return None
 
     if not data_processor.process_daily_data_recent(days=days):
-        print('日线数据处理失败')
+        logger.error('日线数据处理失败')
         if hasattr(data_processor, 'close_connection'):
             data_processor.close_connection()
         return None
@@ -240,7 +273,7 @@ def load_recent_daily_data(max_stocks=None, days: int = 90, use_arc_top: bool = 
     if hasattr(data_processor, 'get_all_daily_data'):
         daily_data = data_processor.get_all_daily_data()
     else:
-        print('底层数据处理器未实现 get_all_daily_data')
+        logger.error('底层数据处理器未实现 get_all_daily_data')
         daily_data = None
 
     if hasattr(data_processor, 'close_connection'):
@@ -252,7 +285,7 @@ def load_recent_daily_data(max_stocks=None, days: int = 90, use_arc_top: bool = 
     if max_stocks:
         daily_data = dict(list(daily_data.items())[:max_stocks])
 
-    print(f"成功加载 {len(daily_data)} 只股票的最近{days}天日线数据")
+    logger.info(f"成功加载 {len(daily_data)} 只股票的最近{days}天日线数据")
     return daily_data
 
 
@@ -270,7 +303,7 @@ def load_arc_stock_codes(arc_json_path="output/arc/top_100.json",
             if isinstance(codes, list) and all(isinstance(c, str) for c in codes):
                 return codes
     except Exception as e:
-        print(f"读取 {arc_json_path} 失败: {e}")
+        logger.error(f"读取 {arc_json_path} 失败: {e}")
 
     # 2) 回退从HTML解析
     try:
@@ -281,7 +314,7 @@ def load_arc_stock_codes(arc_json_path="output/arc/top_100.json",
             matches = re.findall(pattern, html)
             return list(sorted(set(matches)))
     except Exception as e:
-        print(f"解析 {fallback_html_path} 失败: {e}")
+        logger.error(f"解析 {fallback_html_path} 失败: {e}")
 
     return []
 
@@ -302,8 +335,8 @@ def filter_stock_data_by_codes(stock_data_dict, codes):
         else:
             missing.append(code)
     if missing:
-        print(f"警告: {len(missing)} 只大弧底股票在数据集中未找到")
+        logger.warning(f"{len(missing)} 只大弧底股票在数据集中未找到")
         if len(missing) <= 10:
-            print(f"缺失的股票: {missing}")
-    print(f"成功过滤出 {len(filtered)} 只大弧底股票用于后续分析")
+            logger.warning(f"缺失的股票: {missing}")
+    logger.info(f"成功过滤出 {len(filtered)} 只大弧底股票用于后续分析")
     return filtered, missing

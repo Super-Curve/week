@@ -84,11 +84,16 @@ class BaseChartGenerator:
         display_min = global_min - margin
         display_max = global_max + margin
         
+        # 获取图表区域的上下边界
+        boundaries = self.get_chart_boundaries('wind')  # 默认使用Wind风格
+        chart_top = boundaries['chart_top']
+        chart_bottom = boundaries['chart_bottom']
+        
         # 标准化所有价格数据
         def normalize_price(price):
             if display_max == display_min:
                 return self.height // 2
-            return ((display_max - price) / (display_max - display_min)) * (self.height - 80) + 40
+            return ((display_max - price) / (display_max - display_min)) * (chart_bottom - chart_top) + chart_top
         
         # 标准化OHLC数据
         normalized_open = np.array([normalize_price(p) for p in open_prices])
@@ -96,8 +101,17 @@ class BaseChartGenerator:
         normalized_low = np.array([normalize_price(p) for p in low_prices])
         normalized_close = np.array([normalize_price(p) for p in close_prices])
         
-        # 标准化日期到图片宽度，留出空间给坐标轴标签
-        normalized_dates = (dates / (len(dates) - 1)) * (self.width - 120) + 60
+        # 标准化日期到图片宽度，使用动态的图表边界
+        # 根据当前风格获取图表边界
+        boundaries = self.get_chart_boundaries('wind')  # 默认使用Wind风格
+        chart_left = boundaries['chart_left']
+        chart_right = boundaries['chart_right']
+        
+        # 标准化日期到图表区域内
+        if len(dates) > 1:
+            normalized_dates = (dates / (len(dates) - 1)) * (chart_right - chart_left) + chart_left
+        else:
+            normalized_dates = np.array([chart_left])
         
         return {
             'dates': normalized_dates,
@@ -401,7 +415,18 @@ class BaseChartGenerator:
             text_bbox = draw.textbbox((0, 0), time_text, font=font)
             text_width = text_bbox[2] - text_bbox[0]
             
-            draw.text((x - text_width // 2, chart_bottom + 10), 
+            # 修复：对最右侧的标签进行特殊处理，避免超出边界
+            if i == num_labels - 1:  # 最后一个标签
+                # 确保文本不超出右边界
+                text_x = min(x - text_width // 2, chart_right - text_width - 5)
+            elif i == 0:  # 第一个标签
+                # 确保文本不超出左边界
+                text_x = max(x - text_width // 2, chart_left)
+            else:
+                # 中间的标签正常居中
+                text_x = x - text_width // 2
+            
+            draw.text((text_x, chart_bottom + 10), 
                      time_text, fill=color, font=font)
             
             # 绘制时间刻度线
@@ -532,6 +557,11 @@ class BaseChartGenerator:
 
     def normalize_price_for_display(self, price, price_info):
         """标准化价格用于显示 - 公共方法"""
+        # 获取图表区域的上下边界
+        boundaries = self.get_chart_boundaries('wind')  # 默认使用Wind风格
+        chart_top = boundaries['chart_top']
+        chart_bottom = boundaries['chart_bottom']
+        
         if price_info['display_max'] == price_info['display_min']:
             return self.height // 2
-        return ((price_info['display_max'] - price) / (price_info['display_max'] - price_info['display_min'])) * (self.height - 80) + 40 
+        return ((price_info['display_max'] - price) / (price_info['display_max'] - price_info['display_min'])) * (chart_bottom - chart_top) + chart_top 

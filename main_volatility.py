@@ -31,7 +31,7 @@ def main():
     # 处理数据 - 使用数据库数据源
     from src.core.stock_data_processor import create_stock_data_processor
     
-    data_processor = create_stock_data_processor(use_database=True)
+    data_processor = create_stock_data_processor()
     if not data_processor.load_data():
         print('数据库连接失败')
         return

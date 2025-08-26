@@ -17,10 +17,14 @@
 import os
 import json
 import argparse
+import time
 from src.analyzers.advanced_pivot_analyzer import EnterprisesPivotAnalyzer
-from src.generators.pivot_chart_generator import PivotChartGenerator
-from src.generators.pivot_html_generator import PivotHTMLGenerator
+from src.generators.pivot_chart_generator_optimized import PivotChartGeneratorOptimized
+from src.generators.pivot_html_generator_optimized import PivotHTMLGeneratorOptimized
 from src.utils.common_utils import setup_output_directories, clear_cache_if_needed
+from src.utils.logger import get_logger, log_performance
+
+logger = get_logger(__name__)
 
 
 def load_arc_stocks_from_json(json_path):
@@ -28,14 +32,14 @@ def load_arc_stocks_from_json(json_path):
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             arc_stocks = json.load(f)
-        print(f"从大弧底分析结果中加载了 {len(arc_stocks)} 只股票")
+        logger.info(f"从大弧底分析结果中加载了 {len(arc_stocks)} 只股票")
         return arc_stocks
     except FileNotFoundError:
-        print(f"错误: 大弧底分析结果文件不存在: {json_path}")
-        print("请先运行 main_arc.py 生成大弧底分析结果")
+        logger.info(f"错误: 大弧底分析结果文件不存在: {json_path}")
+        logger.info("请先运行 main_arc.py 生成大弧底分析结果")
         return []
     except json.JSONDecodeError as e:
-        print(f"错误: 无法解析JSON文件: {e}")
+        logger.info(f"错误: 无法解析JSON文件: {e}")
         return []
 
 
@@ -51,15 +55,15 @@ def filter_stock_data_by_arc_results(stock_data_dict, arc_stocks):
             missing_stocks.append(code)
     
     if missing_stocks:
-        print(f"警告: {len(missing_stocks)} 只大弧底股票在数据集中未找到")
+        logger.info(f"警告: {len(missing_stocks)} 只大弧底股票在数据集中未找到")
         if len(missing_stocks) <= 10:
-            print(f"缺失的股票: {missing_stocks}")
+            logger.info(f"缺失的股票: {missing_stocks}")
     
-    print(f"成功过滤出 {len(filtered_data)} 只大弧底股票用于高低点分析")
+    logger.info(f"成功过滤出 {len(filtered_data)} 只大弧底股票用于高低点分析")
     return filtered_data
 
 
-def analyze_pivot_points(stock_data_dict, max_stocks=None, method='enterprise_ensemble', sensitivity='balanced'):
+def analyze_pivot_points(stock_data_dict, max_stocks=None, method='enterprise_ensemble', sensitivity='balanced', stock_names=None):
     """
     企业级高低点分析 - 使用统一的企业级分析器
     
@@ -73,12 +77,13 @@ def analyze_pivot_points(stock_data_dict, max_stocks=None, method='enterprise_en
             - 'adaptive_ml': 自适应机器学习
             - 'microstructure': 市场微观结构分析
         sensitivity: 敏感度 ['conservative', 'balanced', 'aggressive']
+        stock_names: 股票名称字典 {code: name}
     """
-    print("=" * 60)
-    print("🚀 启动企业级高低点分析系统")
-    print(f"📊 分析方法: {method}")
-    print(f"🎯 敏感度: {sensitivity}")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("🚀 启动企业级高低点分析系统")
+    logger.info(f"📊 分析方法: {method}")
+    logger.info(f"🎯 敏感度: {sensitivity}")
+    logger.info("=" * 60)
     
     # 创建企业级分析器
     analyzer = EnterprisesPivotAnalyzer()
@@ -87,7 +92,7 @@ def analyze_pivot_points(stock_data_dict, max_stocks=None, method='enterprise_en
     total_stocks = len(stock_data_dict)
     analyzed_count = 0
     
-    print(f"\n开始分析 {total_stocks} 只股票的高低点...")
+    logger.info(f"\n开始分析 {total_stocks} 只股票的高低点...")
     
     for i, (code, data) in enumerate(stock_data_dict.items()):
         if max_stocks and analyzed_count >= max_stocks:
@@ -96,11 +101,15 @@ def analyze_pivot_points(stock_data_dict, max_stocks=None, method='enterprise_en
         try:
             # 数据长度检查
             if len(data) < 30:
-                print(f"⏭️  跳过 {code}: 数据不足（仅 {len(data)} 周，至少需要30周）")
+                stock_name = stock_names.get(code, '') if stock_names else ''
+                name_display = f" {stock_name}" if stock_name else ""
+                logger.info(f"⏭️  跳过 {code}{name_display}: 数据不足（仅 {len(data)} 周，至少需要30周）")
                 continue
             
             # 使用企业级分析器进行检测
-            print(f"🔍 分析 {code}...")
+            stock_name = stock_names.get(code, '') if stock_names else ''
+            name_display = f" {stock_name}" if stock_name else ""
+            logger.info(f"🔍 分析 {code}{name_display}...")
             pivot_result = analyzer.detect_pivot_points(
                 data,
                 method=method,
@@ -120,56 +129,59 @@ def analyze_pivot_points(stock_data_dict, max_stocks=None, method='enterprise_en
                     # 显示分析结果摘要
                     accuracy = pivot_result.get('accuracy_score', 0)
                     quality_grade = pivot_result.get('enterprise_quality', {}).get('quality_grade', 'Unknown')
-                    print(f"✅ {code}: {total_pivots} 个转折点, 质量: {quality_grade} ({accuracy:.1%})")
+                    logger.info(f"✅ {code}{name_display}: {total_pivots} 个转折点, 质量: {quality_grade} ({accuracy:.1%})")
                 else:
-                    print(f"⚠️  跳过 {code}: 未识别到有效的高低点")
+                    logger.info(f"⚠️  跳过 {code}{name_display}: 未识别到有效的高低点")
             else:
-                print(f"❌ 跳过 {code}: 高低点分析失败")
+                logger.info(f"❌ 跳过 {code}{name_display}: 高低点分析失败")
         
         except Exception as e:
-            print(f"❌ 分析 {code} 时出错: {e}")
+            logger.error(f"分析 {code} 时出错: {e}")
             continue
         
         # 显示进度
         if (i + 1) % 10 == 0:
             progress = ((i + 1) / total_stocks) * 100
-            print(f"\n📈 进度报告: {i + 1}/{total_stocks} 只股票 ({progress:.1f}%) - 有效分析 {analyzed_count} 只")
+            logger.info(f"\n📈 进度报告: {i + 1}/{total_stocks} 只股票 ({progress:.1f}%) - 有效分析 {analyzed_count} 只")
     
-    print("\n" + "=" * 60)
-    print(f"✅ 企业级高低点分析完成!")
-    print(f"📊 成功分析: {analyzed_count} 只股票")
-    print(f"🎯 使用方法: {method}")
-    print(f"⚙️  敏感度: {sensitivity}")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info(f"✅ 企业级高低点分析完成!")
+    logger.info(f"📊 成功分析: {analyzed_count} 只股票")
+    logger.info(f"🎯 使用方法: {method}")
+    logger.info(f"⚙️  敏感度: {sensitivity}")
+    logger.info("=" * 60)
     
     return pivot_results
 
 
-def generate_charts_and_html(stock_data_dict, pivot_results, output_dir):
+def generate_charts_and_html(stock_data_dict, pivot_results, output_dir, data_source='database', stock_names=None):
     """生成图表和HTML页面"""
     
     # 创建图表生成器
-    chart_generator = PivotChartGenerator(
+    chart_generator = PivotChartGeneratorOptimized(
         output_dir=os.path.join(output_dir, 'images')
     )
     
     # 批量生成图表
-    print("开始生成高低点图表...")
+    logger.info("开始生成高低点图表...")
     chart_paths = chart_generator.generate_charts_batch(
         stock_data_dict, pivot_results
     )
     
     if not chart_paths:
-        print("错误: 没有生成任何图表")
+        logger.info("错误: 没有生成任何图表")
         return None
     
     # 生成HTML页面
-    print("开始生成HTML页面...")
-    html_generator = PivotHTMLGenerator(output_dir=output_dir)
+    logger.info("开始生成HTML页面...")
+    html_generator = PivotHTMLGeneratorOptimized(output_dir=output_dir)
     
-    # 可以在这里添加股票名称映射，暂时使用股票代码
+    # 使用传入的股票名称，避免重复查询数据库
+    if not stock_names:
+        logger.info("股票名称未在加载数据时获取，将使用股票代码作为名称")
+    
     html_path = html_generator.generate_pivot_html(
-        pivot_results, chart_paths, stock_names=None
+        pivot_results, chart_paths, stock_names=stock_names
     )
     
     return html_path
@@ -203,14 +215,14 @@ def save_analysis_results(pivot_results, output_dir):
     with open(results_file, 'w', encoding='utf-8') as f:
         json.dump(save_data, f, ensure_ascii=False, indent=2)
     
-    print(f"分析结果已保存到: {results_file}")
+    logger.info(f"分析结果已保存到: {results_file}")
 
 
 def create_navigation_integration():
     """创建导航集成，更新主index.html文件"""
     main_index_path = "output/index.html"
     # 统一覆盖生成最新的主页
-    print("生成/更新主导航页面...")
+    logger.info("生成/更新主导航页面...")
     create_main_navigation()
 
 
@@ -291,6 +303,18 @@ def create_main_navigation():
           <p>ATR / Parkinson / Garman-Klass 等多估计器</p>
           <a href="volatility/index.html">波动率分析</a>
         </div>
+        <div class="card">
+          <span class="tag">新</span>
+          <h3>📊 中长期策略</h3>
+          <p>年化波动率40%-50%，夏普比率≥0.5</p>
+          <a href="long_term/index.html">中长期策略</a>
+        </div>
+        <div class="card">
+          <span class="tag">新</span>
+          <h3>⚡ 短期波段</h3>
+          <p>日线数据：半年化波动率≥50%，夏普比率>1.0</p>
+          <a href="short_term/index.html">短期波段</a>
+        </div>
       </div>
       <div class="footer">© 2024 量化研究平台 · 数据来自数据库 · ZigZag+ATR 自适应阈值</div>
     </div>
@@ -302,11 +326,13 @@ def create_main_navigation():
     with open(main_index_path, 'w', encoding='utf-8') as f:
         f.write(navigation_html)
     
-    print(f"主导航页面已创建: {main_index_path}")
+    logger.info(f"主导航页面已创建: {main_index_path}")
 
 
+@log_performance(logger)
 def main():
     """主函数"""
+    start_time = time.time()
     parser = argparse.ArgumentParser(description='企业级A股高低点分析系统 - 融合顶级量化交易技术的智能转折点识别')
     # 统一使用数据库作为数据源，去除CSV参数依赖
     parser.add_argument('--arc-json', default='output/arc/top_100.json', help='大弧底分析结果JSON文件路径')
@@ -332,98 +358,111 @@ def main():
     if args.clear_cache:
         clear_cache_if_needed(args.clear_cache)
     
-    print("=" * 70)
-    print("🚀 企业级A股高低点分析系统")
-    print("融合顶级量化交易技术的智能转折点识别平台")
-    print("=" * 70)
-    print(f"📊 检测方法: {args.method}")
-    print(f"🎯 敏感度: {args.sensitivity}")
-    print("🔬 技术栈: 分形维度 | 统计验证 | 机器学习 | 微观结构")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("🚀 企业级A股高低点分析系统")
+    logger.info("融合顶级量化交易技术的智能转折点识别平台")
+    logger.info("=" * 70)
+    logger.info(f"📊 检测方法: {args.method}")
+    logger.info(f"🎯 敏感度: {args.sensitivity}")
+    logger.info("🔬 技术栈: 分形维度 | 统计验证 | 机器学习 | 微观结构")
+    logger.info("=" * 70)
     
     # 根据是否使用全量数据决定加载策略
     if args.full_data:
         # 使用全量数据模式
-        print("\n📊 步骤1: 使用全量数据模式（跳过大弧底过滤）")
-        print("⚠️  警告：全量数据分析可能需要较长时间...")
+        logger.info("\n📊 步骤1: 使用全量数据模式（跳过大弧底过滤）")
+        logger.info("⚠️  警告：全量数据分析可能需要较长时间...")
         
         # 2. 加载和处理股票数据（统一数据库数据源）
-        print("\n📈 步骤2: 加载和处理全部股票数据（数据库）")
+        logger.info("\n📈 步骤2: 加载和处理全部股票数据（数据库）")
         from src.utils.common_utils import load_and_process_data
         # 加载全部数据
-        all_stock_data = load_and_process_data(use_arc_top=False, max_stocks=args.max)
+        result = load_and_process_data(use_arc_top=False, max_stocks=args.max, return_with_names=True)
+        if isinstance(result, tuple):
+            all_stock_data, stock_names = result
+        else:
+            all_stock_data = result
+            stock_names = None
         if not all_stock_data:
-            print("数据加载失败")
+            logger.info("数据加载失败")
             return
-        print(f"成功加载 {len(all_stock_data)} 只股票的周K线数据")
+        logger.info(f"成功加载 {len(all_stock_data)} 只股票的周K线数据")
         
         # 全量模式下不需要过滤，直接使用全部数据
-        print("\n🔍 步骤3: 使用全部股票数据进行分析")
+        logger.info("\n🔍 步骤3: 使用全部股票数据进行分析")
         filtered_stock_data = all_stock_data
     else:
         # 传统模式：仅分析大弧底股票
         # 1. 加载大弧底分析结果
-        print("\n📊 步骤1: 加载大弧底分析结果")
+        logger.info("\n📊 步骤1: 加载大弧底分析结果")
         arc_stocks = load_arc_stocks_from_json(args.arc_json)
         if not arc_stocks:
-            print("无法加载大弧底分析结果，程序退出")
+            logger.info("无法加载大弧底分析结果，程序退出")
             return
         
         # 2. 加载和处理股票数据（统一数据库数据源）
-        print("\n📈 步骤2: 加载和处理股票数据（数据库）")
+        logger.info("\n📈 步骤2: 加载和处理股票数据（数据库）")
         from src.utils.common_utils import load_and_process_data
         # 只加载ARC列表（最多200只），和 uptrend 一致
-        all_stock_data = load_and_process_data(use_arc_top=True)
+        # 同时获取股票名称
+        result = load_and_process_data(use_arc_top=True, return_with_names=True)
+        if isinstance(result, tuple):
+            all_stock_data, stock_names = result
+        else:
+            all_stock_data = result
+            stock_names = None
         if not all_stock_data:
-            print("数据加载失败")
+            logger.info("数据加载失败")
             return
-        print(f"成功加载 {len(all_stock_data)} 只股票的周K线数据")
+        logger.info(f"成功加载 {len(all_stock_data)} 只股票的周K线数据")
         
         # 3. 根据大弧底结果过滤股票数据
-        print("\n🔍 步骤3: 过滤大弧底股票数据")
+        logger.info("\n🔍 步骤3: 过滤大弧底股票数据")
         filtered_stock_data = filter_stock_data_by_arc_results(all_stock_data, arc_stocks)
         if not filtered_stock_data:
-            print("没有找到有效的大弧底股票数据，程序退出")
+            logger.info("没有找到有效的大弧底股票数据，程序退出")
             return
     
     # 4. 执行企业级高低点分析
-    print(f"\n🎯 步骤4: 执行企业级高低点分析")
+    logger.info(f"\n🎯 步骤4: 执行企业级高低点分析")
     pivot_results = analyze_pivot_points(
         filtered_stock_data, 
         max_stocks=args.max,
         method=args.method,
-        sensitivity=args.sensitivity
+        sensitivity=args.sensitivity,
+        stock_names=stock_names
     )
     if not pivot_results:
-        print("没有生成有效的高低点分析结果，程序退出")
+        logger.info("没有生成有效的高低点分析结果，程序退出")
         return
     
     # 5. 生成图表和HTML页面
-    print("\n📊 步骤5: 生成图表和HTML页面")
-    html_path = generate_charts_and_html(filtered_stock_data, pivot_results, output_dir)
+    logger.info("\n📊 步骤5: 生成图表和HTML页面")
+    # 传递股票名称到生成函数
+    html_path = generate_charts_and_html(filtered_stock_data, pivot_results, output_dir, 'database', stock_names)
     if not html_path:
-        print("图表和HTML生成失败")
+        logger.info("图表和HTML生成失败")
         return
     
     # 6. 保存分析结果
-    print("\n💾 步骤6: 保存分析结果")
+    logger.info("\n💾 步骤6: 保存分析结果")
     save_analysis_results(pivot_results, output_dir)
     
     # 7. 创建导航集成
-    print("\n🔗 步骤7: 创建导航集成")
+    logger.info("\n🔗 步骤7: 创建导航集成")
     create_navigation_integration()
     
     # 完成总结
-    print("\n" + "=" * 70)
-    print("✅ 企业级高低点分析完成!")
-    print(f"📊 分析方法: {args.method}")
-    print(f"🎯 敏感度设置: {args.sensitivity}")
-    print(f"📈 成功分析股票: {len(pivot_results)} 只")
-    print(f"💾 数据模式: {'全量数据分析' if args.full_data else '大弧底股票分析（TOP200）'}")
-    print(f"📁 输出目录: {output_dir}")
-    print(f"🌐 HTML页面: {html_path}")
-    print(f"🏠 主导航: output/index.html")
-    print("=" * 70)
+    logger.info("\n" + "=" * 70)
+    logger.info("✅ 企业级高低点分析完成!")
+    logger.info(f"📊 分析方法: {args.method}")
+    logger.info(f"🎯 敏感度设置: {args.sensitivity}")
+    logger.info(f"📈 成功分析股票: {len(pivot_results)} 只")
+    logger.info(f"💾 数据模式: {'全量数据分析' if args.full_data else '大弧底股票分析（TOP200）'}")
+    logger.info(f"📁 输出目录: {output_dir}")
+    logger.info(f"🌐 HTML页面: {html_path}")
+    logger.info(f"🏠 主导航: output/index.html")
+    logger.info("=" * 70)
     
     # 显示企业级统计信息
     total_pivots = sum(
@@ -439,21 +478,27 @@ def main():
         if quality_grade in quality_stats:
             quality_stats[quality_grade] += 1
     
-    print(f"\n📊 企业级分析统计:")
-    print(f"   🎯 总识别转折点: {total_pivots}")
-    print(f"   🏆 平均F1评分: {avg_accuracy:.1%}")
-    print(f"   📈 平均每股转折点: {total_pivots / len(pivot_results):.1f}")
-    print(f"   ⭐ 质量分布:")
+    logger.info(f"\n📊 企业级分析统计:")
+    logger.info(f"   🎯 总识别转折点: {total_pivots}")
+    logger.info(f"   🏆 平均F1评分: {avg_accuracy:.1%}")
+    logger.info(f"   📈 平均每股转折点: {total_pivots / len(pivot_results):.1f}")
+    logger.info(f"   ⭐ 质量分布:")
     for grade, count in quality_stats.items():
         if count > 0:
             percentage = (count / len(pivot_results)) * 100
-            print(f"      {grade}: {count} 只 ({percentage:.1f}%)")
+            logger.info(f"      {grade}: {count} 只 ({percentage:.1f}%)")
     
-    print(f"\n🔬 技术特色展示:")
-    print(f"   ✅ 分形维度分析 - 基于分形几何识别真实转折点")
-    print(f"   ✅ 统计显著性验证 - 严格的统计学检验标准")
-    print(f"   ✅ 机器学习增强 - 自适应异常检测算法")
-    print(f"   ✅ 企业级质量评估 - 多维度综合评分系统")
+    logger.info(f"\n🔬 技术特色展示:")
+    logger.info(f"   ✅ 分形维度分析 - 基于分形几何识别真实转折点")
+    logger.info(f"   ✅ 统计显著性验证 - 严格的统计学检验标准")
+    logger.info(f"   ✅ 机器学习增强 - 自适应异常检测算法")
+    logger.info(f"   ✅ 企业级质量评估 - 多维度综合评分系统")
+    
+    # 记录总耗时
+    total_time = time.time() - start_time
+    logger.info(f"\n🎯 全部完成！总耗时: {total_time:.2f} 秒")
+    if filtered_stock_data:
+        logger.info(f"📦 平均每只股票耗时: {total_time/len(filtered_stock_data):.2f} 秒")
 
 
 if __name__ == "__main__":
