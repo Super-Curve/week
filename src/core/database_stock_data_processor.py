@@ -403,9 +403,14 @@ class DatabaseStockDataProcessor:
             return None
 
     def _get_daily_data_for_stock(self, stock_code: str, days: int = 90):
-        """获取指定股票的最近N天日K线数据（默认90天，按日历天筛选）。"""
+        """获取指定股票的最近N个交易日数据。
+        
+        Args:
+            stock_code: 股票代码
+            days: 需要的交易日数量（不是日历天数）
+        """
         try:
-            start_date = (datetime.now() - timedelta(days=days + 30)).strftime('%Y-%m-%d')
+            # 直接获取最近N个交易日的数据
             query = """
             SELECT 
                 trade_date,
@@ -414,22 +419,25 @@ class DatabaseStockDataProcessor:
                 CAST(low AS DECIMAL(10,2)) as low,
                 CAST(close AS DECIMAL(10,2)) as close
             FROM history_day_data 
-            WHERE code = %s AND trade_date >= %s
-            ORDER BY trade_date
+            WHERE code = %s
+            ORDER BY trade_date DESC
+            LIMIT %s
             """
-            df = pd.read_sql(query, self.engine, params=(stock_code, start_date))
+            df = pd.read_sql(query, self.engine, params=(stock_code, days))
             if len(df) == 0:
                 return None
+            
+            # 将数据按时间正序排列
+            df = df.sort_values('trade_date')
             df['trade_date'] = pd.to_datetime(df['trade_date'])
             df = df.set_index('trade_date')
             numeric_cols = ['open', 'high', 'low', 'close']
             df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
             df = df.dropna()
-            # 只保留最近days个自然日内的交易记录
-            cutoff = pd.Timestamp(datetime.now() - timedelta(days=days))
-            df = df[df.index >= cutoff]
+            
             return df if len(df) > 0 else None
-        except Exception:
+        except Exception as e:
+            print(f"获取股票 {stock_code} 日线数据失败: {e}")
             return None
     
     def load_data(self):

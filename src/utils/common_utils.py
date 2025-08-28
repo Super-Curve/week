@@ -233,13 +233,19 @@ def create_mock_arc_result(similarity_result, prices):
 
 
 def load_recent_daily_data(max_stocks=None, days: int = 90, use_arc_top: bool = True, arc_json_path: str = "output/arc/top_100.json"):
-    """加载最近N天（日线）数据，默认仅加载 ARC TOP（≤200）的小集合并使用独立缓存。
+    """加载最近N个交易日的日线数据，默认仅加载 ARC TOP（≤200）的小集合并使用独立缓存。
 
-    返回: {code: DataFrame(OHLC, 日频, 最近N天)}
+    Args:
+        max_stocks: 最大股票数量限制
+        days: 需要的交易日数量（注意：不是日历天数）
+        use_arc_top: 是否只加载大弧底TOP股票
+        arc_json_path: 大弧底JSON文件路径
+        
+    返回: {code: DataFrame(OHLC, 日频, 最近N个交易日)}
     """
     from src.core.stock_data_processor import StockDataProcessor
 
-    logger.info(f"使用数据库作为数据源加载最近{days}天的日线数据...")
+    logger.info(f"使用数据库作为数据源加载最近{days}个交易日的日线数据...")
 
     selected_codes = None
     if use_arc_top:

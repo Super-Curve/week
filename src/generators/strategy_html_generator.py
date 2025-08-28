@@ -181,7 +181,33 @@ class StrategyHTMLGenerator:
         
         html += self.template.get_metric_group('策略指标', strategy_metrics)
         
-        # 2. 投资建议
+        # 2. T2和入场点信息
+        if 't2_entry_info' in result:
+            t2_info = result['t2_entry_info']
+            entry_metrics = []
+            
+            # T1信息
+            if 't1_date' in t2_info:
+                entry_metrics.append({'label': 'T1时间', 'value': t2_info['t1_date'].strftime('%Y-%m-%d') if hasattr(t2_info['t1_date'], 'strftime') else str(t2_info['t1_date'])})
+                entry_metrics.append({'label': 'T1价格', 'value': f"{t2_info.get('t1_price', 0):.2f}"})
+            
+            # T2信息
+            if 't2_date' in t2_info:
+                entry_metrics.append({'label': 'T2时间', 'value': t2_info['t2_date'].strftime('%Y-%m-%d') if hasattr(t2_info['t2_date'], 'strftime') else str(t2_info['t2_date'])})
+                entry_metrics.append({'label': 'T2价格', 'value': f"{t2_info.get('t2_price', 0):.2f}"})
+            
+            # 入场点信息
+            if 'entry_date' in t2_info:
+                entry_metrics.append({'label': '入场时间', 'value': t2_info['entry_date'].strftime('%Y-%m-%d') if hasattr(t2_info['entry_date'], 'strftime') else str(t2_info['entry_date'])})
+                entry_metrics.append({'label': '入场价格', 'value': f"{t2_info.get('entry_price', 0):.2f}"})
+                entry_metrics.append({'label': '等待周期', 'value': f"{t2_info.get('wait_periods', 0)}周"})
+            else:
+                entry_metrics.append({'label': '入场时间', 'value': '尚未出现'})
+                entry_metrics.append({'label': '入场价格', 'value': '-'})
+            
+            html += self.template.get_metric_group('进场时机', entry_metrics)
+        
+        # 3. 投资建议
         html += self._generate_investment_suggestion(result, strategy_type)
         
         return html

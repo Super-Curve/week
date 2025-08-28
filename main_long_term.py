@@ -103,9 +103,22 @@ def main():
     
     logger.info(f"成功处理 {len(stock_info)} 只股票的基本信息")
     
-    # 3. 执行策略筛选
-    logger.info("\n🎯 步骤3: 执行中长期策略筛选")
-    strategy_results = analyzer.analyze_long_term_strategy(stock_data, stock_info)
+    # 3. 过滤不合格的股票（ST、U股、上市不足一年）
+    logger.info("\n🔍 步骤3: 过滤不合格的股票")
+    stock_codes = list(stock_data.keys())
+    filtered_codes = analyzer.filter_stocks(stock_codes, stock_info, min_ipo_days=365)
+    
+    # 只保留过滤后的股票数据
+    filtered_stock_data = {code: stock_data[code] for code in filtered_codes if code in stock_data}
+    
+    excluded_count = len(stock_codes) - len(filtered_codes)
+    if excluded_count > 0:
+        logger.info(f"过滤掉 {excluded_count} 只股票（ST/U股/上市不足一年）")
+    logger.info(f"剩余 {len(filtered_stock_data)} 只股票进行策略筛选")
+    
+    # 4. 执行策略筛选
+    logger.info("\n🎯 步骤4: 执行中长期策略筛选")
+    strategy_results = analyzer.long_term_strategy(filtered_stock_data, stock_info)
     
     if not strategy_results:
         logger.info("没有找到符合中长期策略条件的股票")
@@ -113,8 +126,8 @@ def main():
     
     logger.info(f"找到 {len(strategy_results)} 只符合条件的股票")
     
-    # 4. 对筛选出的股票进行高低点分析
-    logger.info("\n🎯 步骤4: 对策略标的进行高低点分析")
+    # 5. 对筛选出的股票进行高低点分析
+    logger.info("\n🎯 步骤5: 对策略标的进行高低点分析")
     pivot_analyzer = EnterprisesPivotAnalyzer()
     pivot_results = {}
     
@@ -128,7 +141,7 @@ def main():
             pivot_result = pivot_analyzer.detect_pivot_points(
                 df,
                 method='zigzag_atr',
-                sensitivity='aggressive',
+                sensitivity='balanced',
                 frequency='weekly'
             )
             
@@ -136,6 +149,15 @@ def main():
                 pivot_results[code] = pivot_result
                 logger.info(f"{code}: 识别到 {len(pivot_result.get('filtered_pivot_highs', []))} 个高点，"
                           f"{len(pivot_result.get('filtered_pivot_lows', []))} 个低点")
+                
+                # 计算T2和入场点
+                t2_entry_info = analyzer.find_t2_and_entry_point(df, pivot_result)
+                if t2_entry_info:
+                    strategy_results[code]['t2_entry_info'] = t2_entry_info
+                    if 'entry_date' in t2_entry_info:
+                        logger.info(f"{code}: 入场时间 {t2_entry_info['entry_date']}, 入场价格 {t2_entry_info['entry_price']:.2f}")
+                    else:
+                        logger.info(f"{code}: T2已识别，等待入场信号")
             else:
                 # 如果没有识别到高低点，使用空的结果
                 pivot_results[code] = {
@@ -153,8 +175,8 @@ def main():
                 'pivot_lows': []
             }
     
-    # 5. 生成图表
-    logger.info("\n📊 步骤5: 生成K线图表（带高低点标注）")
+    # 6. 生成图表
+    logger.info("\n📊 步骤6: 生成K线图表（带高低点标注）")
     chart_generator = PivotChartGeneratorOptimized(
         output_dir=os.path.join(output_dir, 'images')
     )
@@ -185,8 +207,8 @@ def main():
     
     logger.info(f"成功生成 {len(chart_paths)} 个图表")
     
-    # 6. 生成HTML报告
-    logger.info("\n📄 步骤6: 生成HTML报告")
+    # 7. 生成HTML报告
+    logger.info("\n📄 步骤7: 生成HTML报告")
     html_generator = StrategyHTMLGenerator(output_dir=output_dir)
     html_path = html_generator.generate_strategy_html(
         strategy_results, chart_paths, strategy_type='long_term'
@@ -196,8 +218,8 @@ def main():
         logger.error("HTML生成失败")
         return
     
-    # 7. 更新主导航页面
-    logger.info("\n🔗 步骤7: 更新主导航页面")
+    # 8. 更新主导航页面
+    logger.info("\n🔗 步骤8: 更新主导航页面")
     try:
         from main_pivot import create_main_navigation
         create_main_navigation()

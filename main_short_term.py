@@ -53,7 +53,7 @@ def main():
     
     # 1. 加载股票日线数据（最近6个月，约120个交易日）
     logger.info("\n📈 步骤1: 加载股票日线数据（最近6个月）")
-    daily_data = load_recent_daily_data(max_stocks=args.max, days=180, use_arc_top=False)  # 180天约6个月
+    daily_data = load_recent_daily_data(max_stocks=args.max, days=120, use_arc_top=False)  # 120个交易日约6个月
     
     if not daily_data:
         logger.error("日线数据加载失败")
@@ -114,9 +114,22 @@ def main():
     
     logger.info(f"成功处理 {len(stock_info)} 只股票的基本信息")
     
-    # 3. 执行策略筛选（使用日线数据）
-    logger.info("\n🎯 步骤3: 执行短期波段策略筛选（基于日线数据）")
-    strategy_results = analyzer.analyze_short_term_strategy(daily_data, stock_info, use_daily_data=True)
+    # 3. 过滤不合格的股票（ST、U股、上市不足一年）
+    logger.info("\n🔍 步骤3: 过滤不合格的股票")
+    stock_codes = list(daily_data.keys())
+    filtered_codes = analyzer.filter_stocks(stock_codes, stock_info, min_ipo_days=365)
+    
+    # 只保留过滤后的股票数据
+    filtered_daily_data = {code: daily_data[code] for code in filtered_codes if code in daily_data}
+    
+    excluded_count = len(stock_codes) - len(filtered_codes)
+    if excluded_count > 0:
+        logger.info(f"过滤掉 {excluded_count} 只股票（ST/U股/上市不足一年）")
+    logger.info(f"剩余 {len(filtered_daily_data)} 只股票进行策略筛选")
+    
+    # 4. 执行策略筛选（使用日线数据）
+    logger.info("\n🎯 步骤4: 执行短期波段策略筛选（基于日线数据）")
+    strategy_results = analyzer.short_term_strategy(filtered_daily_data, stock_info, use_daily_data=True)
     
     if not strategy_results:
         logger.info("没有找到符合短期波段策略条件的股票")
@@ -124,10 +137,36 @@ def main():
     
     logger.info(f"找到 {len(strategy_results)} 只符合条件的股票")
     
-    # 4. 对筛选出的股票进行高低点分析
-    logger.info("\n🎯 步骤4: 对策略标的进行高低点分析（日线数据）")
+    # 5. 为策略标的加载周线数据（用于图表显示）
+    logger.info("\n📊 步骤5: 加载策略标的的周线数据")
+    # 加载全部周线数据，然后筛选出策略标的
+    weekly_stock_codes = list(strategy_results.keys())
+    weekly_result = load_and_process_data(use_arc_top=False, return_with_names=True)
+    
+    if isinstance(weekly_result, tuple):
+        all_weekly_data, _ = weekly_result
+    else:
+        all_weekly_data = weekly_result
+    
+    # 筛选出策略标的的周线数据
+    weekly_data = {}
+    if all_weekly_data:
+        for code in weekly_stock_codes:
+            if code in all_weekly_data:
+                weekly_data[code] = all_weekly_data[code]
+        logger.info(f"成功加载 {len(weekly_data)} 只策略标的的周K线数据")
+    else:
+        logger.error("周线数据加载失败")
+        # 使用日线数据作为备选
+        for code in strategy_results:
+            if code in daily_data:
+                weekly_data[code] = daily_data[code]
+    
+    # 6. 对筛选出的股票进行高低点分析
+    logger.info("\n🎯 步骤6: 对策略标的进行高低点分析（日线数据）")
     pivot_analyzer = EnterprisesPivotAnalyzer()
     pivot_results = {}
+    pivot_results_weekly = {}  # 存储周线的高低点分析结果
     
     # 准备用于图表生成的数据（使用日线数据）
     chart_stock_data = {code: result['data'] for code, result in strategy_results.items()}
@@ -139,7 +178,7 @@ def main():
             pivot_result = pivot_analyzer.detect_pivot_points(
                 df,
                 method='zigzag_atr',
-                sensitivity='aggressive',
+                sensitivity='conservative',
                 frequency='daily'  # 指定为日频
             )
             
@@ -147,6 +186,17 @@ def main():
                 pivot_results[code] = pivot_result
                 logger.info(f"{code}: 识别到 {len(pivot_result.get('filtered_pivot_highs', []))} 个高点，"
                           f"{len(pivot_result.get('filtered_pivot_lows', []))} 个低点")
+                
+                # 计算T2和入场点（使用周线数据）
+                # 注意：这里使用的是周线数据的结果，因为我们需要在周线图上标注
+                if code in weekly_data:
+                    t2_entry_info = analyzer.find_t2_and_entry_point(weekly_data[code], pivot_results_weekly.get(code, pivot_result))
+                    if t2_entry_info:
+                        strategy_results[code]['t2_entry_info'] = t2_entry_info
+                        if 'entry_date' in t2_entry_info:
+                            logger.info(f"{code}: 入场时间 {t2_entry_info['entry_date']}, 入场价格 {t2_entry_info['entry_price']:.2f}")
+                        else:
+                            logger.info(f"{code}: T2已识别，等待入场信号")
             else:
                 # 如果没有识别到高低点，使用空的结果
                 pivot_results[code] = {
@@ -163,23 +213,50 @@ def main():
                 'pivot_highs': [],
                 'pivot_lows': []
             }
+        
+        # 同时分析周线数据的高低点（用于T2和入场点计算）
+        if code in weekly_data:
+            try:
+                pivot_result_weekly = pivot_analyzer.detect_pivot_points(
+                    weekly_data[code],
+                    method='zigzag_atr',
+                    sensitivity='aggressive',
+                    frequency='weekly'
+                )
+                if pivot_result_weekly and pivot_result_weekly.get('filtered_pivot_highs') is not None:
+                    pivot_results_weekly[code] = pivot_result_weekly
+            except Exception as e:
+                logger.error(f"分析 {code} 周线高低点失败: {e}")
+                pivot_results_weekly[code] = {
+                    'filtered_pivot_highs': [],
+                    'filtered_pivot_lows': [],
+                    'pivot_highs': [],
+                    'pivot_lows': []
+                }
     
-    # 5. 生成图表
-    logger.info("\n📊 步骤5: 生成K线图表（带高低点标注）")
+    # 7. 生成图表（使用周线数据以便显示T2和入场点）
+    logger.info("\n📊 步骤7: 生成K线图表（带高低点标注）")
     chart_generator = PivotChartGeneratorOptimized(
         output_dir=os.path.join(output_dir, 'images'),
-        frequency_label="日K线图（近6个月）"  # 标注为日K线
+        frequency_label="周K线图"  # 使用周K线图
     )
     
-    # 生成带高低点标注的K线图
+    # 生成带高低点标注的K线图（使用周线数据）
     chart_paths = {}
-    for code, df in chart_stock_data.items():
+    for code in strategy_results:
+        # 使用周线数据生成图表
+        if code not in weekly_data:
+            logger.warning(f"{code}: 没有周线数据，跳过图表生成")
+            continue
+            
+        df = weekly_data[code]
+        
         try:
             # 生成原始K线图
             original_path = chart_generator.generate_original_chart(code, df)
             
-            # 生成带高低点的分析图
-            pivot_result = pivot_results.get(code, {
+            # 生成带高低点的分析图（使用周线的高低点结果）
+            pivot_result = pivot_results_weekly.get(code, {
                 'filtered_pivot_highs': [],
                 'filtered_pivot_lows': [],
                 'pivot_highs': [],
@@ -197,8 +274,8 @@ def main():
     
     logger.info(f"成功生成 {len(chart_paths)} 个图表")
     
-    # 6. 生成HTML报告
-    logger.info("\n📄 步骤6: 生成HTML报告")
+    # 8. 生成HTML报告
+    logger.info("\n📄 步骤8: 生成HTML报告")
     html_generator = StrategyHTMLGenerator(output_dir=output_dir)
     html_path = html_generator.generate_strategy_html(
         strategy_results, chart_paths, strategy_type='short_term'
@@ -208,8 +285,8 @@ def main():
         logger.error("HTML生成失败")
         return
     
-    # 7. 更新主导航页面
-    logger.info("\n🔗 步骤7: 更新主导航页面")
+    # 9. 更新主导航页面
+    logger.info("\n🔗 步骤9: 更新主导航页面")
     try:
         from main_pivot import create_main_navigation
         create_main_navigation()

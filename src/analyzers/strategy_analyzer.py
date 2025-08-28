@@ -53,15 +53,9 @@ class StrategyAnalyzer:
         if len(returns) == 0:
             return 0.0, 0.0
         
-        # 如果指定了实际周期数，使用它来计算年化因子
-        if actual_periods is not None:
-            # 年化因子 = √(年周期数 / 实际周期数)
-            annualization_factor = np.sqrt(periods / actual_periods)
-            # 年化波动率 = 样本标准差 * 年化因子
-            volatility = returns.std() * annualization_factor
-        else:
-            # 传统方式：假设数据代表完整周期
-            volatility = returns.std() * np.sqrt(periods)
+        # 年化波动率的计算：日/周收益率标准差 × √年周期数
+        # 这个计算与实际使用多少数据无关，只与数据频率有关
+        volatility = returns.std() * np.sqrt(periods)
         
         # 计算实际的时间跨度（年）
         if actual_periods is not None:
@@ -101,12 +95,9 @@ class StrategyAnalyzer:
             
             for _, row in df.iterrows():
                 code = row['stock_code']
-                market_value_str = row['total_market_value'] or '0'
+                market_value = self._parse_market_value(row['total_market_value'])
                 
-                # 解析市值（处理各种格式，如"500亿"）
-                market_value = self._parse_market_value(market_value_str)
-                
-                # 分类市值
+                # 计算市值分类
                 if market_value >= 500:
                     category = '大盘股'
                 elif market_value >= 100:
@@ -115,7 +106,7 @@ class StrategyAnalyzer:
                     category = '小盘股'
                 
                 stock_info[code] = {
-                    'name': row['stock_name'] or code,
+                    'name': row['stock_name'],
                     'market_value': market_value,
                     'ipo_date': row['ipo_date'],
                     'market_cap_category': category
@@ -128,129 +119,91 @@ class StrategyAnalyzer:
             return {}
     
     def _parse_market_value(self, value_str: str) -> float:
-        """解析市值字符串，返回亿元为单位的数值"""
-        if not value_str or value_str == '0':
+        """解析市值字符串（处理'亿'等单位）"""
+        if pd.isna(value_str) or value_str == '':
             return 0.0
         
+        # 转换为字符串并去除空格
+        value_str = str(value_str).strip()
+        
+        # 如果包含'亿'，直接返回数字部分
+        if '亿' in value_str:
+            try:
+                return float(value_str.replace('亿', '').strip())
+            except:
+                return 0.0
+        
+        # 尝试直接转换
         try:
-            # 移除空格和逗号
-            value_str = value_str.replace(' ', '').replace(',', '')
-            
-            # 处理不同单位
-            if '万亿' in value_str:
-                return float(value_str.replace('万亿', '')) * 10000
-            elif '亿' in value_str:
-                return float(value_str.replace('亿', ''))
-            elif '万' in value_str:
-                return float(value_str.replace('万', '')) / 10000
-            else:
-                # 如果是纯数字，假设单位是元
-                return float(value_str) / 100000000  # 转换为亿
+            return float(value_str)/100000000
         except:
             return 0.0
     
-    def filter_stocks(self, stock_data: Dict[str, pd.DataFrame], stock_info: Dict[str, Dict], 
-                     min_ipo_days: int = 365) -> Dict[str, pd.DataFrame]:
+    def filter_stocks(self, codes: List[str], stock_info: Dict[str, Dict], 
+                     min_ipo_days: int = 365) -> List[str]:
         """
-        过滤不符合条件的股票
+        过滤股票（排除ST、U股、上市时间不足的股票）
         
         Args:
-            stock_data: 股票数据字典
+            codes: 股票代码列表
             stock_info: 股票信息字典
-            min_ipo_days: 最小上市天数
+            min_ipo_days: 最少上市天数要求
             
         Returns:
-            过滤后的股票数据
+            过滤后的股票代码列表
         """
-        filtered_data = {}
+        filtered_codes = []
         today = datetime.now()
         
-        # 统计过滤原因
-        st_count = 0
-        u_count = 0
-        hk_count = 0
-        ipo_count = 0
-        bj_count = 0
-        
-        for code, df in stock_data.items():
-            # 获取股票信息
+        for code in codes:
+            # 检查是否是ST或U股
             info = stock_info.get(code, {})
             name = info.get('name', '')
-            ipo_date_str = info.get('ipo_date', '')
             
-            # 过滤ST股票
-            if 'ST' in name.upper():
-                st_count += 1
-                continue
-            
-            # 过滤U股
-            if name.endswith('-U'):
-                u_count += 1
+            if 'ST' in name or name.endswith('-U'):
                 continue
 
-            # 过滤港股
-            if code.endswith('.HK'):
-                hk_count += 1
-                continue
-
-            # 过滤北交所
-            if code.endswith('.BJ'):
-                bj_count += 1
+            # 过滤港股和北交所
+            if code.endswith('HK') or code.endswith('BJ'):
                 continue
             
-            # 过滤上市时间不足的股票
-            if ipo_date_str:
-                try:
-                    ipo_date = pd.to_datetime(ipo_date_str).to_pydatetime()
-                    if (today - ipo_date).days < min_ipo_days:
-                        ipo_count += 1
-                        continue
-                except:
-                    pass  # 如果解析失败，不过滤
+            # 检查上市时间
+            if min_ipo_days > 0:
+                ipo_date_str = info.get('ipo_date')
+                if ipo_date_str:
+                    try:
+                        ipo_date = pd.to_datetime(ipo_date_str)
+                        days_listed = (today - ipo_date).days
+                        if days_listed < min_ipo_days:
+                            continue
+                    except:
+                        pass
             
-            filtered_data[code] = df
+            filtered_codes.append(code)
         
-        # 输出过滤统计
-        total_filtered = st_count + u_count + ipo_count
-        if total_filtered > 0:
-            print(f"\n🔍 股票过滤统计：")
-            print(f"   原始股票数：{len(stock_data)}")
-            print(f"   过滤ST股票：{st_count}")
-            print(f"   过滤U股：{u_count}")
-            print(f"   过滤港股：{hk_count}")
-            print(f"   过滤北交所：{bj_count}")
-            print(f"   过滤新股（<{min_ipo_days}天）：{ipo_count}")
-            print(f"   剩余股票数：{len(filtered_data)}")
-            print(f"   过滤比例：{total_filtered/len(stock_data)*100:.1f}%\n")
-        
-        return filtered_data
+        return filtered_codes
     
-    def analyze_long_term_strategy(self, stock_data: Dict[str, pd.DataFrame], 
-                                  stock_info: Dict[str, Dict]) -> Dict[str, Dict]:
+    def long_term_strategy(self, stock_data_dict: Dict[str, pd.DataFrame], 
+                          stock_info: Dict[str, Dict]) -> Dict[str, Dict]:
         """
         中长期策略筛选
-        条件：
-        - 最近一年的年化波动率：40% <= 波动率 < 50%
-        - 最近一年的年化夏普率 >= 0.5
+        条件：最近一年的年化波动率40%-50%，年化夏普率≥0.5
         """
         results = {}
         
-        # 先过滤股票
-        filtered_data = self.filter_stocks(stock_data, stock_info)
-        
-        for code, df in filtered_data.items():
-            if len(df) < 52:  # 至少需要一年数据
+        for code, df in stock_data_dict.items():
+            # 使用最近一年数据（52周）
+            recent_data = df.tail(52)
+            if len(recent_data) < 52:
                 continue
             
-            # 使用最近一年数据
-            recent_data = df.tail(52)
             prices = recent_data['close']
             
             # 计算指标
             volatility, sharpe = self.calculate_volatility_and_sharpe(prices)
             
             # 判断是否符合条件
-            if 0.4 <= volatility < 0.5 and sharpe >= 0.5:
+            if 0.4 <= volatility <= 0.5 and sharpe >= 0.5:
                 info = stock_info.get(code, {})
                 results[code] = {
                     'volatility': volatility,
@@ -263,38 +216,51 @@ class StrategyAnalyzer:
         
         return results
     
-    def analyze_short_term_strategy(self, stock_data: Dict[str, pd.DataFrame], 
-                                   stock_info: Dict[str, Dict], use_daily_data: bool = True) -> Dict[str, Dict]:
+    def recommend_strategy(self, volatility: float, sharpe: float) -> str:
+        """
+        根据指标推荐策略类型
+        
+        Returns:
+            'long_term' 或 'short_term'
+        """
+        # 中长期策略：波动率适中(40%-50%)，夏普比率较高(≥0.5)
+        if 0.4 <= volatility <= 0.5 and sharpe >= 0.5:
+            return 'long_term'
+        # 短期策略：波动率较高(≥50%)，夏普比率>1
+        elif volatility >= 0.5 and sharpe > 1:
+            return 'short_term'
+        else:
+            return 'long_term'
+    
+    def short_term_strategy(self, stock_data_dict: Dict[str, pd.DataFrame], 
+                           stock_info: Dict[str, Dict], use_daily_data: bool = False) -> Dict[str, Dict]:
         """
         短期波段策略筛选
-        条件：
-        - 最近6个月的年化波动率 >= 50%
-        - 最近6个月的夏普率 > 1
+        条件：最近6个月的年化波动率≥50%，夏普比率>1
         
         Args:
-            stock_data: 股票数据字典（可以是周线或日线）
-            stock_info: 股票信息字典
-            use_daily_data: 是否使用日线数据（True表示日线，False表示周线）
+            stock_data_dict: 股票数据字典
+            stock_info: 股票信息字典  
+            use_daily_data: 是否使用日线数据（True）还是周线数据（False）
         """
         results = {}
-        
-        # 先过滤股票
-        filtered_data = self.filter_stocks(stock_data, stock_info)
+
+        print(f"开始执行短期波段策略筛选，使用{use_daily_data}数据")
         
         # 根据数据类型设置参数
         if use_daily_data:
-            # 日线数据：6个月约120个交易日
-            min_data_points = 120
+            # 日线：6个月约120个交易日
             data_points_6months = 120
-            periods_per_year = 252  # 年化参数
+            periods_per_year = 252
         else:
-            # 周线数据：6个月约26周
-            min_data_points = 26
+            # 周线：6个月约26周
             data_points_6months = 26
-            periods_per_year = 52  # 年化参数
+            periods_per_year = 52
         
-        for code, df in filtered_data.items():
-            if len(df) < min_data_points:  # 至少需要6个月数据
+        for code, df in stock_data_dict.items():
+            # 检查数据是否足够
+            if len(df) < data_points_6months:
+                print(f"股票 {code}: 数据不足，跳过")
                 continue
             
             # 使用最近6个月数据
@@ -316,6 +282,9 @@ class StrategyAnalyzer:
                     prices, 
                     periods=periods_per_year
                 )
+
+
+            print(f"股票 {code}: 波动率={volatility:.1%}, 夏普={sharpe:.2f}")
             
             # 判断是否符合条件
             if volatility >= 0.5 and sharpe > 1:
@@ -330,3 +299,79 @@ class StrategyAnalyzer:
                 }
         
         return results
+    
+    def find_t2_and_entry_point(self, data: pd.DataFrame, pivot_result: dict) -> dict:
+        """
+        查找T2和入场点
+        
+        Args:
+            data: 股票数据
+            pivot_result: 高低点分析结果
+            
+        Returns:
+            包含T2和入场点信息的字典
+        """
+        try:
+            # 获取过滤后的高低点
+            filtered_lows = pivot_result.get('filtered_pivot_lows', [])
+            filtered_highs = pivot_result.get('filtered_pivot_highs', [])
+            
+            if not filtered_lows or not filtered_highs:
+                return {}
+            
+            # 找到T1（最低点）
+            lows = data['low'].values
+            valid_lows = [idx for idx in filtered_lows if 0 <= idx < len(lows)]
+            if not valid_lows:
+                return {}
+            
+            t1_idx = min(valid_lows, key=lambda i: lows[i])
+            t1_date = data.index[t1_idx]
+            t1_price = lows[t1_idx]
+            
+            # 找到T2（T1之后的第一个高点）
+            t2_candidates = [idx for idx in filtered_highs if idx > t1_idx]
+            if not t2_candidates:
+                return {'t1_date': t1_date, 't1_price': t1_price}
+            
+            t2_idx = min(t2_candidates)
+            t2_date = data.index[t2_idx]
+            t2_price = data['high'].iloc[t2_idx]
+            
+            # 找入场点（T2后半年第一个高于T2的点）
+            half_year_later_idx = t2_idx + 26  # 26周约等于半年
+            
+            entry_date = None
+            entry_price = None
+            entry_idx = None
+            
+            if half_year_later_idx < len(data):
+                for idx in range(half_year_later_idx, len(data)):
+                    if data['high'].iloc[idx] > t2_price:
+                        entry_idx = idx
+                        entry_date = data.index[idx]
+                        entry_price = data['close'].iloc[idx]  # 使用收盘价作为入场价
+                        break
+            
+            result = {
+                't1_date': t1_date,
+                't1_price': t1_price,
+                't1_idx': t1_idx,
+                't2_date': t2_date,
+                't2_price': t2_price,
+                't2_idx': t2_idx
+            }
+            
+            if entry_date is not None:
+                result.update({
+                    'entry_date': entry_date,
+                    'entry_price': entry_price,
+                    'entry_idx': entry_idx,
+                    'wait_periods': entry_idx - t2_idx  # 等待周期数
+                })
+            
+            return result
+            
+        except Exception as e:
+            print(f"计算T2和入场点时出错: {e}")
+            return {}

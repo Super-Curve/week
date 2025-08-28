@@ -114,7 +114,16 @@ class PivotChartGenerator(BaseChartGenerator):
         self._draw_pivot_points(draw, normalized_data, pivot_result)
 
         # 标注T1（最低的已识别低点）
-        self._draw_t1_annotation(draw, normalized_data, data, pivot_result)
+        t1_idx = self._draw_t1_annotation(draw, normalized_data, data, pivot_result)
+        
+        # 如果找到T1，标注T2
+        t2_idx = None
+        if t1_idx is not None:
+            t2_idx = self._draw_t2_annotation(draw, normalized_data, data, pivot_result, t1_idx)
+        
+        # 如果找到T2，标注入场点
+        if t2_idx is not None:
+            self._draw_entry_point_annotation(draw, normalized_data, data, t2_idx)
         
         # 保存图片
         img.save(save_path, quality=95, optimize=True)
@@ -733,15 +742,105 @@ class PivotChartGenerator(BaseChartGenerator):
                 return
             x = int(dates[t1_idx])
             y = int(low_y[t1_idx])
-            # 画一个高亮圆圈和“T1”标签
+            # 画一个高亮圆圈和"T1"标签
             radius = 8
             draw.ellipse([(x - radius, y - radius), (x + radius, y + radius)], outline='#f39c12', width=3)
             font = self._get_chinese_font(12)
             label = "T1"
             # 标签稍微偏右上，避免遮挡K线
             draw.text((x + radius + 3, y - radius - 2), label, fill='#f39c12', font=font)
+            return t1_idx  # 返回T1索引供后续使用
         except Exception:
-            return
+            return None
+    
+    def _draw_t2_annotation(self, draw, normalized_data, original_data, pivot_result, t1_idx):
+        """在图上标注T2（T1之后的第一个高点）。"""
+        try:
+            if t1_idx is None:
+                return None
+            
+            filtered_highs = pivot_result.get('filtered_pivot_highs', []) or []
+            if not filtered_highs:
+                return None
+            
+            # 找到T1之后的高点
+            t2_candidates = [idx for idx in filtered_highs if idx > t1_idx]
+            if not t2_candidates:
+                return None
+            
+            # 选择第一个高点作为T2
+            t2_idx = min(t2_candidates)
+            
+            dates = normalized_data['dates']
+            high_y = normalized_data['high']
+            if t2_idx >= len(dates) or t2_idx >= len(high_y):
+                return None
+            
+            x = int(dates[t2_idx])
+            y = int(high_y[t2_idx])
+            
+            # 画一个高亮圆圈和"T2"标签
+            radius = 8
+            draw.ellipse([(x - radius, y - radius), (x + radius, y + radius)], outline='#e74c3c', width=3)
+            font = self._get_chinese_font(12)
+            label = "T2"
+            # 标签稍微偏右上，避免遮挡K线
+            draw.text((x + radius + 3, y - radius - 2), label, fill='#e74c3c', font=font)
+            return t2_idx
+        except Exception:
+            return None
+    
+    def _draw_entry_point_annotation(self, draw, normalized_data, original_data, t2_idx):
+        """在图上标注入场点（T2后半年第一个高于T2的点）。"""
+        try:
+            if t2_idx is None:
+                return None
+            
+            highs = original_data['high'].values
+            if t2_idx >= len(highs):
+                return None
+            
+            t2_price = highs[t2_idx]
+            
+            # T2后半年大约是26周
+            half_year_later = t2_idx + 26
+            
+            # 从半年后开始找第一个高于T2的点
+            entry_idx = None
+            for idx in range(half_year_later, len(highs)):
+                if highs[idx] > t2_price:
+                    entry_idx = idx
+                    break
+            
+            if entry_idx is None or entry_idx >= len(normalized_data['dates']):
+                return None
+            
+            # 获取坐标
+            dates = normalized_data['dates']
+            x = int(dates[entry_idx])
+            # 使用收盘价作为标注位置
+            close_y = normalized_data['close']
+            if entry_idx >= len(close_y):
+                return None
+            y = int(close_y[entry_idx])
+            
+            # 画一个绿色三角形和"入场"标签
+            triangle_size = 10
+            points = [
+                (x, y - triangle_size),
+                (x - triangle_size, y + triangle_size),
+                (x + triangle_size, y + triangle_size)
+            ]
+            draw.polygon(points, fill='#27ae60', outline='#27ae60')
+            
+            font = self._get_chinese_font(12)
+            label = "入场"
+            # 标签在三角形下方
+            draw.text((x - 12, y + triangle_size + 5), label, fill='#27ae60', font=font)
+            
+            return entry_idx
+        except Exception:
+            return None
     
     def generate_charts_batch(self, stock_data_dict, pivot_results_dict, max_charts=None):
         """
