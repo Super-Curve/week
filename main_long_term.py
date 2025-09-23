@@ -23,6 +23,8 @@ from src.utils.common_utils import (
 from src.core.database_stock_data_processor import DatabaseStockDataProcessor
 from src.utils.logger import get_logger, log_performance
 import time
+from datetime import datetime, date
+from src.integration.strategy_persistence import save_strategy_candidates, save_pivot_points
 
 logger = get_logger(__name__)
 
@@ -207,7 +209,48 @@ def main():
     
     logger.info(f"成功生成 {len(chart_paths)} 个图表")
     
-    # 7. 生成HTML报告
+    # 7. 落库：将本次策略结果存入 strategy_candidates（按 dt 幂等）
+    try:
+        dt_today: date = datetime.now().date()
+        written = save_strategy_candidates(
+            dt=dt_today,
+            strategy_type="long_term",
+            results=strategy_results,
+            stock_info=stock_info,
+            data_frequency="weekly",
+            data_window_days=52,
+        )
+        logger.info(f"已落库中长期策略标的 {written} 条（dt={dt_today}）")
+    except Exception as e:
+        logger.error(f"落库中长期策略标的失败: {e}")
+
+    # 8. 保存高低点至数据库（周频，过滤后）
+    try:
+        dt_today: date = datetime.now().date()
+        saved_total = 0
+        for code, df in chart_stock_data.items():
+            piv = pivot_results.get(code)
+            if not piv:
+                continue
+            data_idx = list(df.index.date)
+            prices_high = df['high'].tolist() if 'high' in df.columns else None
+            prices_low = df['low'].tolist() if 'low' in df.columns else None
+            saved = save_pivot_points(
+                dt=dt_today,
+                code=code,
+                data_frequency='weekly',
+                pivot_result=piv,
+                data_index=data_idx,
+                prices_high=prices_high,
+                prices_low=prices_low,
+                is_filtered=True,
+            )
+            saved_total += saved
+        logger.info(f"已落库周频高低点 {saved_total} 条（dt={dt_today}）")
+    except Exception as e:
+        logger.error(f"落库周频高低点失败: {e}")
+
+    # 9. 生成HTML报告
     logger.info("\n📄 步骤7: 生成HTML报告")
     html_generator = StrategyHTMLGenerator(output_dir=output_dir)
     html_path = html_generator.generate_strategy_html(
@@ -218,7 +261,7 @@ def main():
         logger.error("HTML生成失败")
         return
     
-    # 8. 更新主导航页面
+    # 9. 更新主导航页面
     logger.info("\n🔗 步骤8: 更新主导航页面")
     try:
         from main_pivot import create_main_navigation

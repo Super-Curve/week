@@ -23,6 +23,8 @@ from src.utils.common_utils import (
 from src.core.database_stock_data_processor import DatabaseStockDataProcessor
 from src.utils.logger import get_logger, log_performance
 import time
+from datetime import datetime, date
+from src.integration.strategy_persistence import save_strategy_candidates, save_pivot_points
 
 logger = get_logger(__name__)
 
@@ -273,8 +275,70 @@ def main():
             logger.error(f"生成 {code} 图表失败: {e}")
     
     logger.info(f"成功生成 {len(chart_paths)} 个图表")
-    
-    # 8. 生成HTML报告
+
+    # 7. 落库：将本次短期策略结果存入 strategy_candidates（按 dt 幂等）
+    try:
+        dt_today: date = datetime.now().date()
+        written = save_strategy_candidates(
+            dt=dt_today,
+            strategy_type="short_term",
+            results=strategy_results,
+            stock_info=stock_info,
+            data_frequency="daily",
+            data_window_days=120,
+        )
+        logger.info(f"已落库短期策略标的 {written} 条（dt={dt_today}）")
+    except Exception as e:
+        logger.error(f"落库短期策略标的失败: {e}")
+
+    # 8. 保存高低点至数据库（优先保存日频；若有周频分析结果一并保存）
+    try:
+        dt_today: date = datetime.now().date()
+        saved_daily_total = 0
+        for code, df_daily in chart_stock_data.items():
+            piv_daily = pivot_results.get(code)
+            if not piv_daily:
+                continue
+            data_idx_daily = list(df_daily.index.date)
+            prices_high_daily = df_daily['high'].tolist() if 'high' in df_daily.columns else None
+            prices_low_daily = df_daily['low'].tolist() if 'low' in df_daily.columns else None
+            saved_daily_total += save_pivot_points(
+                dt=dt_today,
+                code=code,
+                data_frequency='daily',
+                pivot_result=piv_daily,
+                data_index=data_idx_daily,
+                prices_high=prices_high_daily,
+                prices_low=prices_low_daily,
+                is_filtered=True,
+            )
+        logger.info(f"已落库日频高低点 {saved_daily_total} 条（dt={dt_today}）")
+
+        # 周频（若可用）
+        if weekly_data:
+            saved_weekly_total = 0
+            for code, df_weekly in weekly_data.items():
+                piv_weekly = pivot_results_weekly.get(code)
+                if not piv_weekly:
+                    continue
+                data_idx_weekly = list(df_weekly.index.date)
+                prices_high_weekly = df_weekly['high'].tolist() if 'high' in df_weekly.columns else None
+                prices_low_weekly = df_weekly['low'].tolist() if 'low' in df_weekly.columns else None
+                saved_weekly_total += save_pivot_points(
+                    dt=dt_today,
+                    code=code,
+                    data_frequency='weekly',
+                    pivot_result=piv_weekly,
+                    data_index=data_idx_weekly,
+                    prices_high=prices_high_weekly,
+                    prices_low=prices_low_weekly,
+                    is_filtered=True,
+                )
+            logger.info(f"已落库周频高低点 {saved_weekly_total} 条（dt={dt_today}）")
+    except Exception as e:
+        logger.error(f"落库高低点失败: {e}")
+
+    # 9. 生成HTML报告
     logger.info("\n📄 步骤8: 生成HTML报告")
     html_generator = StrategyHTMLGenerator(output_dir=output_dir)
     html_path = html_generator.generate_strategy_html(
