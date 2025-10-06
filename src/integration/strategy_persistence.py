@@ -14,16 +14,43 @@ from src.integration.strategy_persistence import save_strategy_candidates
 from __future__ import annotations
 
 import json
+import time
 from datetime import date
 from typing import Dict, Any, List, Tuple
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from config.settings import DATABASE_CONFIG
 
 
+def _retry_db_operation(max_retries=3, delay=1.0):
+    """数据库操作重试装饰器"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except (OperationalError, DisconnectionError) as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        print(f"数据库操作失败，第{attempt + 1}次重试中... 错误: {e}")
+                        time.sleep(delay * (2 ** attempt))  # 指数退避
+                        continue
+                    else:
+                        print(f"数据库操作重试{max_retries}次后仍然失败: {e}")
+                        raise last_exception
+                except Exception as e:
+                    # 对于非连接相关的错误，直接抛出
+                    raise e
+            return None
+        return wrapper
+    return decorator
+
+
 def _create_engine():
-    """Create SQLAlchemy engine from global DATABASE_CONFIG."""
+    """Create SQLAlchemy engine from global DATABASE_CONFIG with enhanced connection settings."""
     connection_string = (
         f"mysql+pymysql://{DATABASE_CONFIG['username']}:{DATABASE_CONFIG['password']}"
         f"@{DATABASE_CONFIG['host']}:{DATABASE_CONFIG['port']}"
@@ -32,16 +59,17 @@ def _create_engine():
     engine = create_engine(
         connection_string,
         pool_pre_ping=True,
-        pool_recycle=3600,
+        pool_recycle=1800,  # 减少到30分钟，避免长时间连接失效
         echo=False,
-        pool_size=10,
-        max_overflow=20,
-        pool_timeout=30,
+        pool_size=15,       # 增加连接池大小
+        max_overflow=30,    # 增加最大溢出连接数
+        pool_timeout=60,    # 增加连接池超时时间
         connect_args={
-            "connect_timeout": 30,
-            "read_timeout": 120,
-            "write_timeout": 120,
+            "connect_timeout": 60,      # 增加连接超时时间
+            "read_timeout": 300,        # 增加读取超时时间到5分钟
+            "write_timeout": 300,       # 增加写入超时时间到5分钟
             "charset": "utf8mb4",
+            "autocommit": True,         # 启用自动提交
         },
     )
     return engine
@@ -123,7 +151,7 @@ def save_strategy_candidates(
 
     sql = text(
         """
-        INSERT INTO strategy_candidates (
+        INSERT INTO stock_targets (
             dt, strategy_type, code, name, market_cap_category, market_value_bil, ipo_date,
             volatility_annualized, sharpe_ratio, rank_in_dt, score,
             t2_date, entry_date, entry_price, data_frequency, data_window_days, extras
@@ -162,6 +190,147 @@ def save_strategy_candidates(
     return affected
 
 
+def save_pivot_points_batch(
+    pivot_data_list: List[Dict[str, Any]],
+    batch_size: int = 100
+) -> int:
+    """批量保存多只股票的高低点数据，提高性能
+    
+    Args:
+        pivot_data_list: 包含多只股票高低点数据的列表，每个元素包含：
+            {
+                'dt': date,
+                'code': str,
+                'data_frequency': str,
+                'pivot_result': dict,
+                'data_index': list,
+                'prices_high': list,
+                'prices_low': list,
+                'is_filtered': bool
+            }
+        batch_size: 批量处理大小
+    
+    Returns:
+        保存的记录总数
+    """
+    if not pivot_data_list:
+        return 0
+    
+    total_saved = 0
+    
+    # 分批处理
+    for i in range(0, len(pivot_data_list), batch_size):
+        batch = pivot_data_list[i:i + batch_size]
+        batch_rows = []
+        
+        # 准备批量数据
+        for data in batch:
+            dt = data['dt']
+            code = data['code']
+            data_frequency = data['data_frequency']
+            pivot_result = data['pivot_result']
+            data_index = data['data_index']
+            prices_high = data['prices_high']
+            prices_low = data['prices_low']
+            is_filtered = data['is_filtered']
+            
+            if not pivot_result:
+                continue
+                
+            highs = pivot_result.get('filtered_pivot_highs', []) if is_filtered else pivot_result.get('raw_pivot_highs', [])
+            lows = pivot_result.get('filtered_pivot_lows', []) if is_filtered else pivot_result.get('raw_pivot_lows', [])
+            meta = (pivot_result.get('pivot_meta') or {})
+            meta_high = meta.get('pivot_meta_highs', {}) if isinstance(meta, dict) else {}
+            meta_low = meta.get('pivot_meta_lows', {}) if isinstance(meta, dict) else {}
+            
+            def row_from_idx(idx: int, is_high_flag: int) -> Dict[str, Any]:
+                trade_dt = str(data_index[idx]) if idx < len(data_index) else None
+                if trade_dt and ' ' in trade_dt:
+                    trade_dt = trade_dt.split(' ')[0]
+                price_val = None
+                if is_high_flag == 1 and prices_high is not None and idx < len(prices_high):
+                    try:
+                        price_val = float(prices_high[idx])
+                    except Exception:
+                        price_val = None
+                if is_high_flag == 0 and prices_low is not None and idx < len(prices_low):
+                    try:
+                        price_val = float(prices_low[idx])
+                    except Exception:
+                        price_val = None
+                m = meta_high.get(idx, {}) if is_high_flag == 1 else meta_low.get(idx, {})
+                return {
+                    'dt': dt.isoformat(),
+                    'code': code,
+                    'data_frequency': data_frequency,
+                    'is_filtered': 1 if is_filtered else 0,
+                    'is_high': is_high_flag,
+                    'trade_date': trade_dt,
+                    'bar_index': int(idx),
+                    'price': price_val,
+                    'prominence': float(m.get('prominence')) if m.get('prominence') is not None else None,
+                    'confirm_strength': float(m.get('confirm_move')) if m.get('confirm_move') is not None else None,
+                    'z_score': float(m.get('z_left')) if m.get('z_left') is not None else None,
+                    'atr_pct': float(m.get('atr_pct')) if m.get('atr_pct') is not None else None,
+                    'extras': json.dumps(m) if isinstance(m, dict) and m else None,
+                }
+            
+            # 添加高点和低点
+            for idx in highs or []:
+                if isinstance(idx, (int,)) and 0 <= idx < len(data_index):
+                    batch_rows.append(row_from_idx(idx, 1))
+            for idx in lows or []:
+                if isinstance(idx, (int,)) and 0 <= idx < len(data_index):
+                    batch_rows.append(row_from_idx(idx, 0))
+        
+        # 批量执行数据库操作
+        if batch_rows:
+            saved_count = _execute_batch_insert(batch_rows)
+            total_saved += saved_count
+            print(f"批量保存进度: {min(i + batch_size, len(pivot_data_list))}/{len(pivot_data_list)}, 本批保存 {saved_count} 条")
+    
+    return total_saved
+
+
+@_retry_db_operation(max_retries=3, delay=2.0)
+def _execute_batch_insert(rows: List[Dict[str, Any]]) -> int:
+    """执行批量插入操作"""
+    if not rows:
+        return 0
+    
+    engine = _create_engine()
+    sql = text(
+        """
+        INSERT INTO pivot_points (
+            dt, code, data_frequency, is_filtered, is_high, trade_date,
+            bar_index, price, prominence, confirm_strength, z_score, atr_pct, extras
+        ) VALUES (
+            :dt, :code, :data_frequency, :is_filtered, :is_high, :trade_date,
+            :bar_index, :price, :prominence, :confirm_strength, :z_score, :atr_pct, :extras
+        )
+        ON DUPLICATE KEY UPDATE
+            bar_index = VALUES(bar_index),
+            price = VALUES(price),
+            prominence = VALUES(prominence),
+            confirm_strength = VALUES(confirm_strength),
+            z_score = VALUES(z_score),
+            atr_pct = VALUES(atr_pct),
+            extras = VALUES(extras)
+        """
+    )
+    
+    try:
+        with engine.begin() as conn:
+            conn.execute(sql, rows)
+        return len(rows)
+    finally:
+        try:
+            engine.dispose()
+        except Exception:
+            pass
+
+
+@_retry_db_operation(max_retries=3, delay=2.0)
 def save_pivot_points(
     dt: date,
     code: str,
@@ -172,7 +341,7 @@ def save_pivot_points(
     prices_low: List[float] | None,
     is_filtered: bool = True,
 ) -> int:
-    """Persist pivot points (highs and lows) to pivot_points table using upsert.
+    """Persist pivot points (highs and lows) to pivot_points table using upsert with retry mechanism.
 
     pivot_result keys expected: filtered_pivot_highs, filtered_pivot_lows, pivot_meta
     data_index: pandas.DatetimeIndex or list of dates aligned to data used by analyzer
@@ -251,14 +420,15 @@ def save_pivot_points(
         """
     )
 
-    with engine.begin() as conn:
-        conn.execute(sql, rows)
-
     try:
-        engine.dispose()
-    except Exception:
-        pass
-    return len(rows)
+        with engine.begin() as conn:
+            conn.execute(sql, rows)
+        return len(rows)
+    finally:
+        try:
+            engine.dispose()
+        except Exception:
+            pass
 
 
 

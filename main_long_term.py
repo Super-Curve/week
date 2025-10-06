@@ -24,7 +24,7 @@ from src.core.database_stock_data_processor import DatabaseStockDataProcessor
 from src.utils.logger import get_logger, log_performance
 import time
 from datetime import datetime, date
-from src.integration.strategy_persistence import save_strategy_candidates, save_pivot_points
+from src.integration.strategy_persistence import save_strategy_candidates, save_pivot_points_batch
 
 logger = get_logger(__name__)
 
@@ -136,8 +136,13 @@ def main():
     # 准备用于图表生成的数据
     chart_stock_data = {code: result['data'] for code, result in strategy_results.items()}
     
-    # 对每只股票进行高低点分析
-    for code, df in chart_stock_data.items():
+    # 对每只股票进行高低点分析（收集数据，最后批量保存）
+    dt_today = datetime.now().date()
+    pivot_data_batch = []  # 收集待保存的数据
+    total_stocks = len(chart_stock_data)
+    batch_save_size = 30  # 每30只股票批量保存一次（长期策略股票较少）
+    
+    for i, (code, df) in enumerate(chart_stock_data.items(), 1):
         try:
             # 使用ZigZag+ATR方法识别高低点
             pivot_result = pivot_analyzer.detect_pivot_points(
@@ -151,6 +156,22 @@ def main():
                 pivot_results[code] = pivot_result
                 logger.info(f"{code}: 识别到 {len(pivot_result.get('filtered_pivot_highs', []))} 个高点，"
                           f"{len(pivot_result.get('filtered_pivot_lows', []))} 个低点")
+                
+                # 收集高低点数据，准备批量保存
+                data_idx = list(df.index.date)
+                prices_high = df['high'].tolist() if 'high' in df.columns else None
+                prices_low = df['low'].tolist() if 'low' in df.columns else None
+                
+                pivot_data_batch.append({
+                    'dt': dt_today,
+                    'code': code,
+                    'data_frequency': 'weekly',
+                    'pivot_result': pivot_result,
+                    'data_index': data_idx,
+                    'prices_high': prices_high,
+                    'prices_low': prices_low,
+                    'is_filtered': True
+                })
                 
                 # 计算T2和入场点
                 t2_entry_info = analyzer.find_t2_and_entry_point(df, pivot_result)
@@ -168,6 +189,22 @@ def main():
                     'pivot_highs': [],
                     'pivot_lows': []
                 }
+            
+            # 每处理batch_save_size只股票或处理完成时，批量保存一次
+            if len(pivot_data_batch) >= batch_save_size or i == total_stocks:
+                if pivot_data_batch:
+                    try:
+                        saved_count = save_pivot_points_batch(pivot_data_batch, batch_size=100)
+                        logger.info(f"批量保存完成: 处理 {len(pivot_data_batch)} 只股票，保存 {saved_count} 个高低点")
+                        pivot_data_batch = []  # 清空批次数据
+                    except Exception as save_e:
+                        logger.error(f"批量保存高低点失败: {save_e}")
+                        pivot_data_batch = []  # 清空批次数据避免重复保存
+            
+            # 每处理20只股票报告一次进度（长期策略股票数量较少）
+            if i % 20 == 0:
+                logger.info(f"高低点分析进度: {i}/{total_stocks} ({i/total_stocks*100:.1f}%)")
+                
         except Exception as e:
             logger.error(f"分析 {code} 高低点失败: {e}")
             pivot_results[code] = {
@@ -179,33 +216,33 @@ def main():
     
     # 6. 生成图表
     logger.info("\n📊 步骤6: 生成K线图表（带高低点标注）")
-    chart_generator = PivotChartGeneratorOptimized(
-        output_dir=os.path.join(output_dir, 'images')
-    )
+    # chart_generator = PivotChartGeneratorOptimized(
+    #     output_dir=os.path.join(output_dir, 'images')
+    # )
     
     # 生成带高低点标注的K线图
     chart_paths = {}
-    for code, df in chart_stock_data.items():
-        try:
-            # 生成原始K线图
-            original_path = chart_generator.generate_original_chart(code, df)
+    # for code, df in chart_stock_data.items():
+    #     try:
+    #         # 生成原始K线图
+    #         original_path = chart_generator.generate_original_chart(code, df)
             
-            # 生成带高低点的分析图
-            pivot_result = pivot_results.get(code, {
-                'filtered_pivot_highs': [],
-                'filtered_pivot_lows': [],
-                'pivot_highs': [],
-                'pivot_lows': []
-            })
-            analysis_path = chart_generator.generate_pivot_chart(code, df, pivot_result)
+    #         # 生成带高低点的分析图
+    #         pivot_result = pivot_results.get(code, {
+    #             'filtered_pivot_highs': [],
+    #             'filtered_pivot_lows': [],
+    #             'pivot_highs': [],
+    #             'pivot_lows': []
+    #         })
+    #         analysis_path = chart_generator.generate_pivot_chart(code, df, pivot_result)
             
-            if original_path and analysis_path:
-                chart_paths[code] = {
-                    'original': original_path,
-                    'analysis': analysis_path
-                }
-        except Exception as e:
-            logger.error(f"生成 {code} 图表失败: {e}")
+    #         if original_path and analysis_path:
+    #             chart_paths[code] = {
+    #                 'original': original_path,
+    #                 'analysis': analysis_path
+    #             }
+    #     except Exception as e:
+    #         logger.error(f"生成 {code} 图表失败: {e}")
     
     logger.info(f"成功生成 {len(chart_paths)} 个图表")
     
@@ -224,57 +261,34 @@ def main():
     except Exception as e:
         logger.error(f"落库中长期策略标的失败: {e}")
 
-    # 8. 保存高低点至数据库（周频，过滤后）
-    try:
-        dt_today: date = datetime.now().date()
-        saved_total = 0
-        for code, df in chart_stock_data.items():
-            piv = pivot_results.get(code)
-            if not piv:
-                continue
-            data_idx = list(df.index.date)
-            prices_high = df['high'].tolist() if 'high' in df.columns else None
-            prices_low = df['low'].tolist() if 'low' in df.columns else None
-            saved = save_pivot_points(
-                dt=dt_today,
-                code=code,
-                data_frequency='weekly',
-                pivot_result=piv,
-                data_index=data_idx,
-                prices_high=prices_high,
-                prices_low=prices_low,
-                is_filtered=True,
-            )
-            saved_total += saved
-        logger.info(f"已落库周频高低点 {saved_total} 条（dt={dt_today}）")
-    except Exception as e:
-        logger.error(f"落库周频高低点失败: {e}")
+    # 8. 高低点分析和批量保存已完成
+    logger.info("高低点分析和批量保存完成")
 
     # 9. 生成HTML报告
-    logger.info("\n📄 步骤7: 生成HTML报告")
-    html_generator = StrategyHTMLGenerator(output_dir=output_dir)
-    html_path = html_generator.generate_strategy_html(
-        strategy_results, chart_paths, strategy_type='long_term'
-    )
+    # logger.info("\n📄 步骤7: 生成HTML报告")
+    # html_generator = StrategyHTMLGenerator(output_dir=output_dir)
+    # html_path = html_generator.generate_strategy_html(
+    #     strategy_results, chart_paths, strategy_type='long_term'
+    # )
     
-    if not html_path:
-        logger.error("HTML生成失败")
-        return
+    # if not html_path:
+    #     logger.error("HTML生成失败")
+    #     return
     
-    # 9. 更新主导航页面
-    logger.info("\n🔗 步骤8: 更新主导航页面")
-    try:
-        from main_pivot import create_main_navigation
-        create_main_navigation()
-    except Exception as e:
-        logger.error(f"更新主导航失败: {e}")
+    # # 9. 更新主导航页面
+    # logger.info("\n🔗 步骤8: 更新主导航页面")
+    # try:
+    #     from main_pivot import create_main_navigation
+    #     create_main_navigation()
+    # except Exception as e:
+    #     logger.error(f"更新主导航失败: {e}")
     
     # 完成总结
     logger.info("\n" + "=" * 70)
     logger.info("✅ 中长期策略标的池筛选完成!")
     logger.info(f"📊 符合条件股票: {len(strategy_results)} 只")
     logger.info(f"📁 输出目录: {output_dir}")
-    logger.info(f"🌐 HTML报告: {html_path}")
+    # logger.info(f"🌐 HTML报告: {html_path}")
     logger.info(f"🏠 主导航: output/index.html")
     logger.info("=" * 70)
     

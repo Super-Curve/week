@@ -485,37 +485,150 @@ class DatabaseStockDataProcessor:
             print(f"加载数据失败: {e}")
             return False
 
+    def _get_daily_data_batch(self, stock_codes, days: int = 90, batch_size=50):
+        """批量获取多只股票的最近N天日线数据 - 优化版本，防止数据库卡死"""
+        all_data = {}
+        
+        # 减小批次大小，增加连接管理
+        for i in range(0, len(stock_codes), batch_size):
+            batch = stock_codes[i:i+batch_size]
+            
+            # 每批次重新创建连接，避免长时间占用连接
+            try:
+                # 确保连接可用
+                with self.engine.connect() as conn:
+                    placeholders = ','.join(['%s'] * len(batch))
+                    
+                    # 优化的SQL查询 - 减少数据传输量，添加索引提示
+                    query = f"""
+                    SELECT /*+ USE_INDEX(history_day_data, idx_code_date) */
+                        code,
+                        trade_date,
+                        CAST(open AS DECIMAL(10,2)) as open,
+                        CAST(high AS DECIMAL(10,2)) as high,
+                        CAST(low AS DECIMAL(10,2)) as low,
+                        CAST(close AS DECIMAL(10,2)) as close
+                    FROM (
+                        SELECT 
+                            code, trade_date, open, high, low, close,
+                            ROW_NUMBER() OVER (PARTITION BY code ORDER BY trade_date DESC) as rn
+                        FROM history_day_data
+                        WHERE code IN ({placeholders})
+                          AND trade_date >= DATE_SUB(CURDATE(), INTERVAL {days + 30} DAY)
+                    ) ranked
+                    WHERE rn <= %s
+                    ORDER BY code, trade_date
+                    """
+                    
+                    # 执行批量查询，设置超时时间
+                    params = tuple(list(batch) + [days])
+                    df = pd.read_sql(query, conn, params=params)
+                    
+                    if len(df) > 0:
+                        # 按股票代码分组处理
+                        for code, group in df.groupby('code'):
+                            # 按时间正序排列
+                            group = group.sort_values('trade_date')
+                            group['trade_date'] = pd.to_datetime(group['trade_date'])
+                            group = group.set_index('trade_date')
+                            numeric_cols = ['open', 'high', 'low', 'close']
+                            group[numeric_cols] = group[numeric_cols].apply(pd.to_numeric, errors='coerce')
+                            group = group.dropna()
+                            if len(group) > 0:
+                                all_data[code] = group
+                
+                # 显示进度
+                processed = min(i + batch_size, len(stock_codes))
+                print(f"批量日线数据加载进度: {processed}/{len(stock_codes)} ({processed/len(stock_codes)*100:.1f}%) - 本批处理 {len(batch)} 只股票")
+                
+                # 每批次之间短暂休息，减轻数据库压力
+                if i + batch_size < len(stock_codes):
+                    import time
+                    time.sleep(0.1)  # 100ms休息
+                    
+            except Exception as e:
+                print(f"批次 {i//batch_size + 1} 查询失败: {e}")
+                # 如果批量查询失败，回退到单个查询
+                print(f"回退到单个查询模式处理这 {len(batch)} 只股票...")
+                for code in batch:
+                    try:
+                        daily_df = self._get_daily_data_for_stock(code, days=days)
+                        if daily_df is not None and len(daily_df) > 0:
+                            all_data[code] = daily_df
+                    except Exception as single_e:
+                        print(f"股票 {code} 单个查询也失败: {single_e}")
+                        continue
+        
+        return all_data
+
     def process_daily_data_recent(self, days: int = 90):
-        """处理数据，从数据库获取最近N天（日线）数据。"""
+        """处理数据，从数据库获取最近N天（日线）数据 - 渐进式加载版本。"""
         if self._is_daily_cache_valid(days=days):
             if self._load_daily_cache(days=days):
                 return True
         if not self._create_connection():
             print("无法连接到数据库")
             return False
-        print(f"开始从数据库加载最近{days}天的日K线数据...")
+        print(f"开始从数据库渐进式加载最近{days}天的日K线数据...")
         try:
             stock_codes = self._get_stock_codes()
             if not stock_codes:
                 print("未能获取股票代码列表")
                 return False
             print(f"获取到 {len(stock_codes)} 个股票代码")
-            successful_count = 0
-            total_count = len(stock_codes)
-            for i, stock_code in enumerate(stock_codes, 1):
-                if i % 100 == 0:
-                    print(f"处理进度(日): {i}/{total_count} ({i/total_count*100:.1f}%)")
-                daily_df = self._get_daily_data_for_stock(stock_code, days=days)
-                if daily_df is not None and len(daily_df) > 0:
-                    self.daily_data[stock_code] = daily_df
-                    successful_count += 1
-            print(f"遍历完成（日线），成功处理 {successful_count} 只股票")
+            
+            # 渐进式加载：先尝试较大批次，如果失败则自动减小批次
+            batch_sizes = [50, 25, 10]  # 渐进式减小批次大小
+            batch_data = {}
+            
+            for batch_size in batch_sizes:
+                try:
+                    print(f"尝试批次大小: {batch_size}")
+                    batch_data = self._get_daily_data_batch(stock_codes, days=days, batch_size=batch_size)
+                    if batch_data:
+                        print(f"批次大小 {batch_size} 成功，加载了 {len(batch_data)} 只股票")
+                        break
+                except Exception as e:
+                    print(f"批次大小 {batch_size} 失败: {e}")
+                    if batch_size == batch_sizes[-1]:  # 最后一个批次大小也失败
+                        print("所有批次大小都失败，回退到单个查询模式")
+                        batch_data = self._fallback_single_query(stock_codes, days)
+                    continue
+            
+            # 更新到实例变量
+            self.daily_data.update(batch_data)
+            
+            successful_count = len(batch_data)
+            print(f"渐进式加载完成，成功处理 {successful_count} 只股票的日线数据")
+            
             if self.daily_data:
                 self._save_daily_cache(days=days)
             return True
         except Exception as e:
             print(f"加载日线数据失败: {e}")
             return False
+    
+    def _fallback_single_query(self, stock_codes, days: int):
+        """回退到单个查询模式"""
+        print("使用单个查询模式作为最后的回退方案...")
+        all_data = {}
+        successful_count = 0
+        total_count = len(stock_codes)
+        
+        for i, stock_code in enumerate(stock_codes, 1):
+            if i % 100 == 0:
+                print(f"单个查询进度: {i}/{total_count} ({i/total_count*100:.1f}%)")
+            try:
+                daily_df = self._get_daily_data_for_stock(stock_code, days=days)
+                if daily_df is not None and len(daily_df) > 0:
+                    all_data[stock_code] = daily_df
+                    successful_count += 1
+            except Exception as e:
+                print(f"股票 {stock_code} 查询失败: {e}")
+                continue
+        
+        print(f"单个查询模式完成，成功处理 {successful_count} 只股票")
+        return all_data
     
     def _load_all_stock_data(self, stock_codes):
         """批量获取所有股票的周K线数据 - 优化版本"""
